@@ -15,8 +15,8 @@ const MIME_TYPES = {
 };
 
 const server = http.createServer((req, res) => {
-    // 設置允許 Popup 的 Header，解決 Firebase 登入的 COOP 問題
-    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    // 設置最寬鬆的 Header 模擬 VS Code Live Server 環境
+    res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
     res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
 
     let filePath = '.' + req.url;
