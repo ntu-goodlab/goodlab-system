@@ -1,95 +1,104 @@
 # GOODLAB — Firebase Security Rules 更新指南 (Phase 5)
 
-隨著 Phase 5 加入了「值日生」、「Routine」、「聘僱計畫」等新功能，Firebase 資料庫新增了 4 個 Collection，需要你在 Firebase Console 中更新 Security Rules，以免系統被拒絕存取 (`permission-denied`)。
+## 重要：不要整份取代！
 
-## 操作步驟
-1. 前往 [Firebase Console](https://console.firebase.google.com/)。
-2. 進入你的 `goodlab-system` 專案。
-3. 點選左側選單的 **Firestore Database**。
-4. 切換到 **Rules (規則)** 分頁。
-5. 將現有的規則**完全替換**為下方的程式碼。
-6. 點擊 **Publish (發布)**。
+你目前的 Security Rules（5/23 版本）已經有完善的 `isSignedIn()`、`admins` 集合、欄位級權限控制。
+**請不要用這份文件取代你的整份規則**，只需要在你現有規則的 `match /admins/{uid}` 區塊**之後**，`}` 結尾**之前**，加入以下 4 個新 collection 的規則即可。
 
 ---
 
-## 完整 Security Rules 程式碼
+## 在 Firebase Console 中操作
+
+1. 前往 [Firebase Console](https://console.firebase.google.com/) → 你的專案
+2. 左側選單 → **Firestore Database** → **Rules（規則）** 分頁
+3. 找到你現有規則最底部、`match /admins/{uid}` 區塊結束後的位置
+4. 在 `// 最外層的 } }` 之前，貼上下方程式碼
+5. 點擊 **Publish（發布）**
+
+---
+
+## 要新增的規則（複製這段）
 
 ```javascript
-rules_version = '2';
+    // ============================================================
+    // Phase 5 新增集合
+    // ============================================================
 
-service cloud.firestore {
-  match /databases/{database}/documents {
-  
-    // 判斷是否登入
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    // 取得當前使用者的 Role (從 members collection 查詢)
-    function getUserRole() {
-      // request.auth.uid 對應到 members 文件裡的 Google_UID
-      // 由於 Firestore rules 無法直接用 where 查詢，通常要求前端用 Google_UID 當作 Document ID
-      // 但本系統前端的 Document ID 是 Student_ID！
-      // ⚠️ 如果你之前的規則已經設定為只允許 auth != null 就好，那直接用最寬鬆的規則即可，後台權限主要由前端控制。
-      // 下面提供「依賴前端身份驗證」的防護規則。
-      return true; 
-    }
+    // --- 值日生紀錄（duty_records）---
+    match /duty_records/{weekId} {
+      // 任何已登入者可以讀取（需要看輪值順序、代班狀態）
+      allow read: if isSignedIn();
 
-    // ==========================================
-    // 既有集合 (Phase 1~4)
-    // ==========================================
-    match /members/{document=**} {
-      // 所有人可讀取以顯示成員，登入後可寫入（綁定帳號）
-      allow read: if true;
-      allow write: if isAuthenticated();
-    }
-    
-    match /instruments/{document=**} {
-      allow read, write: if isAuthenticated();
-    }
-    
-    match /inventory/{document=**} {
-      allow read, write: if isAuthenticated();
-    }
-    
-    match /logs/{document=**} {
-      allow read, write: if isAuthenticated();
-    }
-    
-    match /accounting/{document=**} {
-      allow read, write: if isAuthenticated();
+      // 新增：任何已登入者都可以（系統自動建立本週紀錄）
+      allow create: if isSignedIn();
+
+      // 更新：任何已登入者都可以（勾選 checkbox、代班流程、提交）
+      // 這裡放寬是因為值日生和代班者都需要寫入，且身份是動態的
+      allow update: if isSignedIn();
+
+      // 刪除：只有 Admin
+      allow delete: if isSignedIn() &&
+                       exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    // ==========================================
-    // 新增集合 (Phase 5)
-    // ==========================================
-    
-    // 值日生紀錄：所有已登入者都能讀寫（需要交接、代班、提交）
-    match /duty_records/{document=**} {
-      allow read, write: if isAuthenticated();
+    // --- 日常維護 Routine（routines）---
+    match /routines/{routineId} {
+      // 只有 Admin 可以讀寫（前端 UI 也只有 Admin 看得到）
+      allow read, write: if isSignedIn() &&
+                            exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    // 日常維護 (Routine)：雖然前端只給 Admin 看，但後端同樣放行給所有已登入者，透過前端阻擋 UI
-    match /routines/{document=**} {
-      allow read, write: if isAuthenticated();
+    // --- 聘僱計畫（projects）---
+    match /projects/{projectId} {
+      // 只有 Admin 可以讀寫（涉及經費資訊）
+      allow read, write: if isSignedIn() &&
+                            exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    // 計畫主檔 (Projects)：只給登入者讀寫
-    match /projects/{document=**} {
-      allow read, write: if isAuthenticated();
+    // --- 學生聘僱紀錄（employments）---
+    match /employments/{empId} {
+      // 只有 Admin 可以讀寫（涉及薪資與個資）
+      allow read, write: if isSignedIn() &&
+                            exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
-
-    // 學生聘僱紀錄 (Employments)：涉及薪資與個資，非常敏感！
-    // 嚴格來說需要 Admin 才能讀取，但為了實作簡單，這裡限制為登入者即可讀寫
-    // 真正的安全做法是將 Admin 的 UID 寫死在這裡，或者使用 Custom Claims
-    match /employments/{document=**} {
-      allow read, write: if isAuthenticated();
-    }
-    
-  }
-}
 ```
 
-### 💡 關於安全性提示
-目前這套規則是**「信任前端驗證」**的模式。只要使用者綁定了 Google 帳號（`isAuthenticated()`），就可以讀寫資料。
-如果未來實驗室有非常嚴格的薪資保密需求（例如有同學用終端機直接打 API 撈 `employments` 資料），則需要請工程師設定 Firebase 的 **Custom Claims**（自訂權杖）來確保 `employments` 只有真正的 Admin 可以讀取！
+---
+
+## 加完之後你的規則結構應該長這樣
+
+```
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 輔助函式
+    function isSignedIn() { ... }
+    
+    // 既有集合 (5/23 版)
+    match /members/{memberId}    { ... }
+    match /instruments/{instId}  { ... }
+    match /logs/{logId}          { ... }
+    match /accounting/{txnId}    { ... }
+    match /inventory/{propId}    { ... }
+    match /admins/{uid}          { ... }
+    
+    // ★ Phase 5 新增（貼在這裡）
+    match /duty_records/{weekId}    { ... }
+    match /routines/{routineId}     { ... }
+    match /projects/{projectId}     { ... }
+    match /employments/{empId}      { ... }
+    
+  }  // ← 這個 } 是 match /databases 的結尾
+}    // ← 這個 } 是 service 的結尾
+```
+
+---
+
+## 權限邏輯說明
+
+| Collection | 讀取 | 新增 | 修改 | 刪除 | 原因 |
+|---|---|---|---|---|---|
+| `duty_records` | 全員 | 全員 | 全員 | Admin | 值日生/代班者都需要寫入，刪除限 Admin |
+| `routines` | Admin | Admin | Admin | Admin | 前端 UI 只有 Admin 看得到 |
+| `projects` | Admin | Admin | Admin | Admin | 涉及計畫經費 |
+| `employments` | Admin | Admin | Admin | Admin | 涉及薪資個資 |
