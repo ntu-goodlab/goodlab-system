@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  base: '/goodlab-system/',
   // 開發伺服器設定
   server: {
     port: 8080,
