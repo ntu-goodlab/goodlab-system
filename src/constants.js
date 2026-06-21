@@ -78,3 +78,10 @@ export const DUTY_NOTES = [
         content: '使用者自行叫貨，不屬於值日生工作。'
     }
 ];
+
+// ==========================================
+// GAS (Google Apps Script) Webhook 設定
+// ==========================================
+// 請在完成 GAS_SETUP_GUIDE.md 的部署後，將得到的網址填入這裡
+export const GAS_WEBHOOK_URL = ""; 
+

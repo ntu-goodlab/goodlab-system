@@ -8,7 +8,7 @@
  *                            submitted: false, submitted_at: null }
  */
 import { db, doc, setDoc, updateDoc } from './firebase.js';
-import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
+import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES, GAS_WEBHOOK_URL } from './constants.js';
 
 export const dutyModule = {
 
@@ -309,6 +309,41 @@ export const dutyModule = {
                 submitted_at: new Date().toISOString()
             });
             this.showNotification('✅ 本週值日生工作已提交！', 'success');
+
+            // --- Phase 5: 寄信給全體實驗室公告交接 ---
+            if (GAS_WEBHOOK_URL) {
+                const roster = this._getDutyRoster();
+                const currentIdx = roster.findIndex(m => m.Student_ID === record.assigned_to);
+                const nextPerson = roster[(currentIdx + 1) % roster.length];
+                const personName = this.currentMember ? this.currentMember.Name_Ch : record.assigned_to;
+                
+                const allEmails = this.data.members
+                    .filter(m => m.Status === 'Active' && m.Email)
+                    .map(m => m.Email)
+                    .join(',');
+
+                const payload = {
+                    to: allEmails,
+                    subject: `【GOODLAB 公告】本週值日生已完成，下週為 ${nextPerson ? nextPerson.Name_Ch : '未知'}`,
+                    body: `
+                        <div style="font-family: sans-serif; line-height: 1.6; color: #333;">
+                            <h2 style="color: #059669;">✅ 值日生交接公告</h2>
+                            <p>Hi 大家：</p>
+                            <p>本週值日生 <b>${personName}</b> 已完成一般清潔與耗材清點工作！</p>
+                            <p>👉 <b>下週值日生輪到：${nextPerson ? nextPerson.Name_Ch : '-'}</b></p>
+                            <p>請下週負責人記得登入系統確認並執行任務。</p>
+                        </div>
+                    `
+                };
+
+                fetch(GAS_WEBHOOK_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }).catch(e => console.error("Webhook error:", e));
+            }
+
         } catch (e) {
             this.showNotification('❌ 提交失敗: ' + e.message, 'error');
         }
