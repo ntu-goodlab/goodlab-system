@@ -566,6 +566,7 @@ html, body {
 .toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .status-badge { display: inline-flex; align-items: center; min-height: 28px; padding: 3px 9px; border-radius: 999px; background: #f1f5f9; color: var(--text-muted); font-size: 0.78rem; font-weight: 600; }
 .status-badge-info { background: #dbeafe; color: #1d4ed8; }
+.status-badge-warning { background: #fff7ed; color: #c2410c; }
 
 .duty-checklist { list-style: none; padding: 0; margin: 0; }
 .duty-checklist li {
@@ -611,24 +612,86 @@ html, body {
 }
 .duty-substitute-banner i { font-size: 1.5rem; color: #ea580c; }
 
+.duty-note-card { border-color: #bfdbfe; background: #f8fbff; }
+.duty-note-card textarea {
+    width: 100%; min-height: 112px; resize: vertical;
+    padding: 12px 14px; border: 1px solid var(--border-color); border-radius: 9px;
+    background: white; color: var(--text-main); font: inherit; line-height: 1.6;
+}
+.duty-note-card textarea:focus-visible {
+    border-color: var(--primary); outline: 3px solid rgba(37, 99, 235, 0.18); outline-offset: 1px;
+}
+.duty-note-card textarea:disabled { background: #f1f5f9; color: var(--text-muted); cursor: not-allowed; }
+.duty-note-label { display: block; margin-bottom: 7px; color: var(--text-main); font-size: 0.9rem; font-weight: 600; }
+.duty-note-footer {
+    display: flex; justify-content: space-between; gap: 12px; margin-top: 7px;
+    color: var(--text-muted); font-size: 0.78rem;
+}
+.duty-note-readonly { margin: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.7; }
+
 .supply-info-tooltip {
-    position: relative; display: inline-flex;
-    align-items: center; cursor: pointer;
+    position: relative; display: inline-flex; margin-left: 2px;
+    vertical-align: middle;
+}
+.supply-info-tooltip summary {
+    width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; color: var(--primary); cursor: pointer; list-style: none;
+    touch-action: manipulation; transition: background 0.15s ease, color 0.15s ease;
+}
+.supply-info-tooltip summary::-webkit-details-marker { display: none; }
+.supply-info-tooltip summary:hover,
+.supply-info-tooltip[open] summary { background: #dbeafe; color: #1d4ed8; }
+.supply-info-tooltip summary:focus-visible {
+    outline: 3px solid rgba(37, 99, 235, 0.24); outline-offset: 2px;
 }
 .supply-info-tooltip .tooltip-content {
-    display: none; position: absolute; bottom: 130%; left: 50%;
-    transform: translateX(-50%); background: #1e293b;
-    color: white; padding: 8px 12px; border-radius: 8px;
-    font-size: 0.8rem; white-space: nowrap; z-index: 100;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+    display: none; position: absolute; bottom: calc(100% + 8px); left: 0;
+    width: max-content; min-width: 250px; max-width: min(320px, calc(100vw - 48px));
+    background: #1e293b; color: white; padding: 12px; border-radius: 10px;
+    font-size: 0.82rem; white-space: normal; z-index: 100;
+    box-shadow: 0 10px 24px rgba(15,23,42,0.24);
 }
-.supply-info-tooltip .tooltip-content::after {
-    content: ''; position: absolute; top: 100%; left: 50%;
-    transform: translateX(-50%);
-    border: 6px solid transparent; border-top-color: #1e293b;
+.supply-info-tooltip .tooltip-content > strong {
+    display: block; margin-bottom: 8px; font-size: 0.9rem;
 }
 .supply-info-tooltip:hover .tooltip-content,
-.supply-info-tooltip:focus .tooltip-content { display: block; }
+.supply-info-tooltip:focus-within .tooltip-content,
+.supply-info-tooltip[open] .tooltip-content { display: block; }
+.vendor-contact-row { display: flex; align-items: stretch; gap: 8px; }
+.vendor-contact-row + .vendor-contact-row { margin-top: 8px; }
+.vendor-phone-link {
+    min-height: 44px; flex: 1; display: flex; align-items: center; gap: 9px;
+    padding: 7px 10px; border-radius: 8px; background: rgba(255,255,255,0.1);
+    color: white; text-decoration: none; font-variant-numeric: tabular-nums;
+    touch-action: manipulation;
+}
+.vendor-phone-link:hover, .vendor-phone-link:focus-visible { background: rgba(255,255,255,0.18); }
+.vendor-phone-link:focus-visible, .vendor-copy-button:focus-visible {
+    outline: 3px solid #93c5fd; outline-offset: 1px;
+}
+.vendor-phone-link i { flex: 0 0 auto; font-size: 1.05rem; }
+.vendor-phone-link span { display: flex; flex-direction: column; line-height: 1.3; }
+.vendor-phone-link small { color: #cbd5e1; font-size: 0.7rem; }
+.vendor-copy-button {
+    width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(255,255,255,0.24); border-radius: 8px;
+    background: transparent; color: white; cursor: pointer; touch-action: manipulation;
+}
+.vendor-copy-button:hover, .vendor-copy-button:active { background: rgba(255,255,255,0.16); }
+.duty-resource-link {
+    min-height: 44px; display: inline-flex; align-items: center; gap: 7px; margin-top: 10px;
+    padding: 8px 12px; border: 1px solid #bfdbfe; border-radius: 8px;
+    color: var(--primary); background: #eff6ff; font-weight: 600; text-decoration: none;
+}
+.duty-resource-link:hover { background: #dbeafe; }
+.duty-resource-link:focus-visible { outline: 3px solid rgba(37,99,235,0.24); outline-offset: 2px; }
+.duty-rotation-help { margin: 12px 0 0; color: var(--text-muted); font-size: 0.82rem; line-height: 1.6; }
+.duty-carryover-loading, .duty-carryover-error {
+    display: flex; align-items: center; gap: 12px; min-height: 88px;
+}
+.duty-carryover-loading > i { color: var(--primary); font-size: 1.5rem; }
+.duty-carryover-loading span, .duty-carryover-error span { color: var(--text-muted); }
+.duty-carryover-error { justify-content: space-between; border-color: #fecaca; background: #fff7f7; }
 
 /* =========================================
    Phase 5 — Routine 頁面樣式
@@ -671,6 +734,12 @@ html, body {
     .section-toolbar .btn, .toolbar-actions .btn { flex: 1; }
     .form-row-two { grid-template-columns: 1fr; gap: 0; }
     .routine-table { min-width: 720px; }
+    .supply-info-tooltip summary { width: 44px; height: 44px; }
+    .supply-info-tooltip .tooltip-content {
+        top: calc(100% + 8px); bottom: auto; left: -72px;
+        max-width: calc(100vw - 56px);
+    }
+    .duty-carryover-error { align-items: stretch; flex-direction: column; }
 }
 
 /* =========================================

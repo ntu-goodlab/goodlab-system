@@ -8,10 +8,10 @@
 
 GOODLAB 採用「GAS 排程 + Firebase 事件」的混合方案：
 
-- 固定時間、低頻率、非交易關鍵郵件繼續由 Google Apps Script 執行。
-- 使用者操作後必須可靠寄出的事件郵件改由 Firebase Cloud Functions 2nd gen 執行。
+- 固定時間、低頻率、非交易關鍵郵件繼續由 Google Apps Script 執行；值日完成交接短期採每 15 分鐘唯讀輪詢與週次冪等鍵。
+- 使用者操作後必須即時寄出、涉及敏感資料或需要完整 delivery 稽核的事件郵件改由 Firebase Cloud Functions 2nd gen 執行。
 - 前端不得直接呼叫可由匿名使用者存取、且可自訂收件者與 HTML 的 GAS Web App。
-- 每封事件信都必須有 outbox／delivery 紀錄、冪等鍵、狀態、錯誤訊息與重試資訊。
+- Cloud Functions 事件信必須有 outbox／delivery 紀錄、冪等鍵、狀態、錯誤訊息與重試資訊；短期 GAS 值日完成通知至少保留週次冪等鍵與執行錯誤紀錄。
 
 ## 為什麼排程郵件保留 GAS
 
@@ -32,7 +32,7 @@ GOODLAB 採用「GAS 排程 + Firebase 事件」的混合方案：
 
 Cloud Functions 可在 Firestore 寫入成功後由事件觸發，使用 Admin SDK 讀取必要資料，並把寄送結果寫回資料庫。Firestore 事件可能重複交付，因此實作必須以 event ID 或業務鍵建立冪等保護。
 
-## 目標資料流
+## 長期目標資料流
 
 ```text
 使用者提交值日／代班
@@ -53,9 +53,9 @@ delivery.status = sent | retrying | failed
 | 郵件 | 執行平台 | 原因 |
 |---|---|---|
 | 每週 Admin 報表 | GAS | 固定排程、低量、容許小時區間內執行 |
-| 值日未完成提醒 | GAS | 固定排程、低量 |
+| 值日未完成提醒 | GAS | 固定排程、低量；當週文件尚未建立時可唯讀推算上一週的順延者 |
 | Routine 到期摘要 | GAS（短期） | 可併入排程摘要 |
-| 值日完成交接 | Cloud Functions | 必須跟業務狀態一致並留下紀錄 |
+| 值日完成交接 | GAS 輪詢（短期）／Cloud Functions（長期） | 現階段容許最長約 15 分鐘延遲，GAS 以週次鍵防重寄；未來若需完整 delivery 稽核再遷移 |
 | 代班邀請／接受／拒絕 | Cloud Functions | 事件型、需驗證操作者與避免重複寄送 |
 | 財務或聘僱通知 | Cloud Functions | 敏感、需稽核與後端權限 |
 
@@ -72,7 +72,7 @@ delivery.status = sent | retrying | failed
 ### Stage A — 立即
 
 - `GAS_WEBHOOK_URL` 保持空值。
-- GAS 僅建立週一與週四時間觸發器。
+- GAS 建立週一、週四及每 15 分鐘的值日完成檢查觸發器。
 - 修正 GAS 報表欄位與目前 Firestore schema 的差異。
 - 使用實驗室共用／可交接的 Workspace 帳號建立觸發器。
 
@@ -80,7 +80,7 @@ delivery.status = sent | retrying | failed
 
 - 建立 `functions/`、Firebase Emulator 與部署設定。
 - 建立 `notification_outbox`、模板與 delivery status schema。
-- 實作值日完成與代班事件函式。
+- 視稽核需求將值日完成通知遷移至 outbox，並實作代班事件函式。
 - 函式需冪等、具結構化 log，並限制收件者只能來自有效 members。
 
 ### Stage C — 維運

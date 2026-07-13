@@ -40,8 +40,9 @@ npm run build
 
 ## 自動寄信
 
-- GAS：每週 Admin 報表、值日未完成提醒、Routine 排程摘要。
-- Firebase Cloud Functions（規劃中）：值日完成、代班、財務與聘僱事件通知。
+- 值日輪值：未提交時由同一位值日生承接新週清單，完成後才前進下一位；Admin 手動指定可明確覆寫順延。
+- GAS：每週 Admin 報表、可推算順延者的值日未完成提醒、Routine 排程摘要，以及具週次防重寄的值日完成通知。
+- Firebase Cloud Functions（規劃中）：代班、財務與聘僱等需要強稽核的事件通知。
 - 舊 `GAS_WEBHOOK_URL` 與 `no-cors` 呼叫已移除；前端不得直接呼叫公開寄信 Webhook。
 
 ## 相關文件

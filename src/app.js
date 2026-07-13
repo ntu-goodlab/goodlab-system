@@ -113,8 +113,11 @@ const app = {
             <p style="margin-bottom: 10px;">碩班同學每週輪流值日，負責實驗室清潔與耗材清點。</p>
             <ul style="margin-top: 10px; padding-left: 20px; line-height: 1.6;">
                 <li><strong>輪值規則：</strong>依學號排序的碩班同學 (非 Admin) 自動輪值。</li>
-                <li><strong>代班機制：</strong>當週值日生可以發出代班邀請，待對方確認後工作進度才會轉移。</li>
-                <li><strong>耗材補貨：</strong>點擊耗材旁的 <i class="ph ph-info"></i> 可查看廠商聯絡方式。</li>
+                <li><strong>未完成順延：</strong>當週未提交時，系統會保留原輪值順序，以新週清單讓同一位值日生繼續；完成後才輪到下一位。</li>
+                <li><strong>輪值對齊：</strong>切換自舊系統時，Admin 可將本週對齊到實際輪值者；Admin 手動指定下週則會優先於自動順延。</li>
+                <li><strong>代班機制：</strong>當週值日生可以發出代班邀請，待對方確認後工作才會轉移；單次代班不會改變後續輪值順序。</li>
+                <li><strong>耗材補貨：</strong>點擊耗材旁的 <i class="ph ph-info"></i> 可查看廠商電話；手機可直接撥號，也可複製電話。其他廠商請使用頁尾共用聯絡表。</li>
+                <li><strong>完成交接：</strong>可在提交前填寫補貨、叫貨或交接備註；提交後系統會寄送完成摘要與下週值日生資訊。</li>
             </ul>`,
         'routine': `
             <h3 style="color: var(--primary); border-bottom: 2px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px;">實驗室 Routine</h3>

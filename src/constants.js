@@ -54,9 +54,25 @@ export const DUTY_SUPPLY_ITEMS = [
 
 // 耗材廠商聯絡資訊（依 vendorGroup 分組）
 export const SUPPLY_VENDORS = {
-    'youhe':     { vendor: '友和', phone: '(02) 2600-0611', note: 'Acetone / Methanol / Detergent' },
-    'qingfeng':  { vendor: '清豐行', phone: '(02) 2541-1497', note: '司機電話：0932-148-096' },
-    'xinan':     { vendor: '信安儀器', phone: '(02) 2365-4317', note: '無塵紙、載玻片、乳膠手套、棉花棒、鋁箔、PE手套' }
+    'youhe': {
+        vendor: '友和',
+        contacts: [
+            { label: '公司電話', display: '(02) 2600-0611', dial: '+886226000611' }
+        ]
+    },
+    'qingfeng': {
+        vendor: '清豐行',
+        contacts: [
+            { label: '公司電話', display: '(02) 2541-1497', dial: '+886225411497' },
+            { label: '司機電話', display: '0932-148-096', dial: '+886932148096' }
+        ]
+    },
+    'xinan': {
+        vendor: '信安儀器',
+        contacts: [
+            { label: '公司電話', display: '(02) 2365-4317', dial: '+886223654317' }
+        ]
+    }
 };
 
 // 值日生補充說明（顯示在頁面底部）
@@ -76,5 +92,13 @@ export const DUTY_NOTES = [
     {
         title: '💡 日光燈、化學藥劑、膠帶等',
         content: '使用者自行叫貨，不屬於值日生工作。'
+    },
+    {
+        title: '其他廠商聯絡方式',
+        content: '其他耗材或設備廠商請查看實驗室共用聯絡表。',
+        link: {
+            label: '開啟其他廠商聯絡表',
+            url: 'https://docs.google.com/spreadsheets/d/1UYfwcC-CIL2YTPhiSl-dpvdMLwt3qaqc/edit?usp=sharing&ouid=113162285503140413315&rtpof=true&sd=true'
+        }
     }
 ];

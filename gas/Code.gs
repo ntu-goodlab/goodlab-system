@@ -2,8 +2,8 @@
  * GOODLAB 排程寄信（Google Apps Script）
  *
  * 僅處理固定排程：
- * - 每週四：值日工作未完成提醒
- * - 每週一：Admin 週報
+ * - 每週四：值日工作未完成提醒（含未完成順延）
+ * - 每週一：Admin 週報（含順延狀態）
  *
  * 不提供 doGet/doPost，也不接受前端指定收件者或信件 HTML。
  */
@@ -11,6 +11,7 @@
 const TIME_ZONE = 'Asia/Taipei';
 const FIRESTORE_PAGE_SIZE = 300;
 const MAX_EMAIL_LIST_ITEMS = 20;
+const DUTY_COMPLETION_SENT_PREFIX = 'DUTY_COMPLETION_SENT_';
 const PROPERTY_KEYS = {
   projectId: 'FIREBASE_PROJECT_ID',
   siteUrl: 'GOODLAB_SITE_URL'
@@ -42,15 +43,58 @@ function testSendToMe() {
   });
 }
 
+function testDutyReminderToMe() {
+  runJob_('TEST_DUTY_REMINDER', function () {
+    const recipient = Session.getEffectiveUser().getEmail();
+    if (!recipient) throw new Error('無法取得目前 GAS 帳號 Email。');
+
+    const weekId = mondayDateKey_(new Date());
+    const members = fetchCollection_('members');
+    const dutyRecords = fetchCollection_('duty_records');
+    const record = resolveDutyRecordForWeek_(dutyRecords, weekId);
+    const person = record && record.assigned_to
+      ? members.find(function (member) { return member.Student_ID === record.assigned_to; })
+      : null;
+    const previewPerson = person || { Name_Ch: '值日生同學', Student_ID: 'PREVIEW' };
+
+    sendEmail_(buildDutyReminderMessage_(previewPerson, weekId, recipient, true, record));
+    console.log('值日提醒預覽已寄給目前 GAS 帳號：' + recipient);
+  });
+}
+
+function testDutyCompletionToMe() {
+  runJob_('TEST_DUTY_COMPLETION', function () {
+    const recipient = Session.getEffectiveUser().getEmail();
+    if (!recipient) throw new Error('無法取得目前 GAS 帳號 Email。');
+
+    const weekId = mondayDateKey_(new Date());
+    const members = fetchCollection_('members');
+    const dutyRecords = fetchCollection_('duty_records');
+    const existing = dutyRecords.find(function (item) { return item._id === weekId; });
+    const previewRecord = Object.assign({
+      _id: weekId,
+      week_start: weekId,
+      scheduled_to: members[0] ? members[0].Student_ID : 'PREVIEW',
+      assigned_to: members[0] ? members[0].Student_ID : 'PREVIEW',
+      submitted: true
+    }, existing || {});
+    previewRecord.note = previewRecord.note || '預覽範例：已補充手套；IPA 已叫貨，預計下週到。';
+    previewRecord.submitted = true;
+
+    sendEmail_(buildDutyCompletionMessage_(previewRecord, members, dutyRecords, recipient, true));
+    console.log('值日完成通知預覽已寄給目前 GAS 帳號：' + recipient);
+  });
+}
+
 function checkDutyReminder() {
   runJob_('DUTY_REMINDER', function () {
     const members = fetchCollection_('members');
     const dutyRecords = fetchCollection_('duty_records');
     const weekId = mondayDateKey_(new Date());
-    const record = dutyRecords.find(function (item) { return item._id === weekId; });
+    const record = resolveDutyRecordForWeek_(dutyRecords, weekId);
 
     if (!record || !record.assigned_to) {
-      console.log('本週沒有值日生紀錄，不寄信。');
+      console.log('找不到本週值日生或可順延的未完成紀錄，不寄信。');
       return;
     }
     if (record.submitted) {
@@ -65,19 +109,118 @@ function checkDutyReminder() {
       throw new Error('本週值日生沒有有效 Email：' + record.assigned_to);
     }
 
-    const safeName = escapeHtml_(person.Name_Ch || person.Student_ID);
-    sendEmail_({
-      to: person.Email,
-      subject: '【GOODLAB】本週值日工作尚未完成（' + weekId + '）',
-      htmlBody: emailLayout_(
-        '值日工作提醒',
-        '<p>' + safeName + '：</p>'
-          + '<p>本週（' + weekId + ' 起）的值日工作尚未完成提交，請完成清潔與耗材清點後到系統送出。</p>'
-          + siteLinkHtml_('開啟 GOODLAB')
-      )
-    });
+    sendEmail_(buildDutyReminderMessage_(person, weekId, person.Email, false, record));
     console.log('值日提醒已寄給 ' + person.Student_ID);
   });
+}
+
+function buildDutyReminderMessage_(person, weekId, recipient, isPreview, record) {
+  const safeName = escapeHtml_(person.Name_Ch || person.Student_ID);
+  const carryoverHtml = record && record.assignment_source === 'carryover'
+    ? '<p style="padding:12px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;color:#9a3412;">'
+      + '<strong>順延提醒：</strong>前一週（' + escapeHtml_(record.carried_from || '未標示週次') + ' 起）尚未完成，因此本週仍由你繼續，完成後才會輪到下一位。</p>'
+    : '';
+  return {
+    to: recipient,
+    subject: (isPreview ? '【GOODLAB 測試預覽】' : '【GOODLAB】') + '本週值日工作尚未完成（' + weekId + '）',
+    htmlBody: emailLayout_(
+      '值日工作提醒',
+      '<p>' + safeName + '：</p>'
+        + '<p>本週（' + weekId + ' 起）的值日工作尚未完成提交，請完成一般清潔與耗材清點，確認所有項目後在系統送出。</p>'
+        + carryoverHtml
+        + siteLinkHtml_('前往值日生清單', 'duty')
+        + siteUrlTextHtml_('duty')
+        + '<div style="margin-top:22px;padding:16px;background:#f1f5f9;border:1px solid #dce3ec;border-radius:10px;">'
+        + '<strong style="display:block;margin-bottom:6px;">首次登入注意事項</strong>'
+        + '<ol style="margin:0;padding-left:20px;">'
+        + '<li>點選右上角「Google 登入」，請使用自己的 Google 帳號，不要使用共用帳號。</li>'
+        + '<li>首次登入會要求輸入學號；該學號須已由 Admin 建立，完成後即會綁定此 Google 帳號。</li>'
+        + '<li>完成綁定後，從選單進入「值日生工作」即可清點與提交；若無法綁定，請聯絡 Admin。</li>'
+        + '</ol></div>'
+    )
+  };
+}
+
+function checkDutyCompletionNotification() {
+  runJob_('DUTY_COMPLETION', function () {
+    const members = fetchCollection_('members');
+    const dutyRecords = fetchCollection_('duty_records');
+    const thisWeek = mondayDateKey_(new Date());
+    const candidateWeekIds = [shiftDateKey_(thisWeek, -7), thisWeek];
+    const properties = PropertiesService.getScriptProperties();
+    const pendingRecords = dutyRecords
+      .filter(function (record) {
+        if (!record.submitted || candidateWeekIds.indexOf(record._id) === -1) return false;
+        return !properties.getProperty(dutyCompletionPropertyKey_(record._id));
+      })
+      .sort(function (a, b) { return String(a._id).localeCompare(String(b._id)); });
+
+    if (!pendingRecords.length) {
+      console.log('目前沒有尚未寄送的值日完成通知。');
+      return;
+    }
+
+    const senderEmail = Session.getEffectiveUser().getEmail();
+    if (!senderEmail) throw new Error('無法取得目前 GAS 帳號 Email。');
+    const studentEmails = getActiveStudentEmails_(members)
+      .filter(function (email) { return email.toLowerCase() !== senderEmail.toLowerCase(); });
+    if (!studentEmails.length) throw new Error('找不到 Active 在學成員的有效 Email。');
+
+    pendingRecords.forEach(function (record) {
+      sendEmail_(buildDutyCompletionMessage_(
+        record,
+        members,
+        dutyRecords,
+        senderEmail,
+        false,
+        studentEmails.join(',')
+      ));
+      properties.setProperty(
+        dutyCompletionPropertyKey_(record._id),
+        String(record.submitted_at || new Date().toISOString())
+      );
+      console.log('值日完成通知已寄給 ' + studentEmails.length + ' 位在學成員：' + record._id);
+    });
+  });
+}
+
+function buildDutyCompletionMessage_(record, members, dutyRecords, recipient, isPreview, bcc) {
+  const weekId = record.week_start || record._id;
+  const scheduledTo = record.scheduled_to || record.assigned_to;
+  const assignedTo = record.assigned_to || scheduledTo;
+  const scheduledMember = members.find(function (member) { return member.Student_ID === scheduledTo; });
+  const assignedMember = members.find(function (member) { return member.Student_ID === assignedTo; });
+  const nextMember = getNextDutyMember_(record, members, dutyRecords);
+  const assignedName = escapeHtml_(assignedMember ? assignedMember.Name_Ch : (assignedTo || '未指定'));
+  const scheduledName = escapeHtml_(scheduledMember ? scheduledMember.Name_Ch : (scheduledTo || '未指定'));
+  const nextName = escapeHtml_(nextMember ? nextMember.Name_Ch : '尚未指定');
+  const note = String(record.note || '').trim();
+  const noteHtml = note
+    ? '<div style="padding:14px 16px;background:#f1f5f9;border:1px solid #dce3ec;border-radius:10px;white-space:normal;overflow-wrap:anywhere;">'
+      + escapeHtml_(note).replace(/\r?\n/g, '<br>') + '</div>'
+    : '<p style="color:#526075;">本週沒有補充備註。</p>';
+  const substituteHtml = assignedTo !== scheduledTo
+    ? '<p style="color:#526075;">原排定：' + scheduledName + '；本週由 ' + assignedName + ' 代班完成。後續輪值仍依原排定順序。</p>'
+    : '';
+  const carryoverHtml = record.assignment_source === 'carryover'
+    ? '<p style="color:#9a3412;">此工作由 ' + escapeHtml_(record.carried_from || '前一週') + ' 起的未完成紀錄順延；本次完成後才恢復正常輪值。</p>'
+    : '';
+
+  return {
+    to: recipient,
+    bcc: bcc || '',
+    subject: (isPreview ? '【GOODLAB 測試預覽】' : '【GOODLAB】') + '本週值日工作已完成（' + weekId + '）',
+    htmlBody: emailLayout_(
+      '本週值日工作已完成',
+      '<p><strong>' + assignedName + '</strong> 已提交 ' + escapeHtml_(weekId) + ' 起的值日工作。</p>'
+        + carryoverHtml
+        + substituteHtml
+        + sectionHtml_('本週備註／補貨與叫貨', noteHtml)
+        + sectionHtml_('下週值日生', '<p><strong>' + nextName + '</strong></p>')
+        + siteLinkHtml_('查看值日生紀錄', 'duty')
+        + siteUrlTextHtml_('duty')
+    )
+  };
 }
 
 function checkWeeklyAdminReport() {
@@ -101,7 +244,7 @@ function checkWeeklyAdminReport() {
     const lastMonday = shiftDateKey_(thisMonday, -7);
     const lastSunday = shiftDateKey_(thisMonday, -1);
 
-    const dutyHtml = buildDutySummary_(dutyRecords, members, lastMonday);
+    const dutyHtml = buildDutySummary_(dutyRecords, members, lastMonday, thisMonday);
     const routineHtml = buildRoutineSummary_(routines, today);
     const logsHtml = buildLogsSummary_(logs, lastMonday, thisMonday);
     const accountingHtml = buildAccountingSummary_(accounting, lastMonday, thisMonday);
@@ -123,7 +266,7 @@ function checkWeeklyAdminReport() {
 }
 
 function installTriggers() {
-  const managedHandlers = ['checkDutyReminder', 'checkWeeklyAdminReport'];
+  const managedHandlers = ['checkDutyReminder', 'checkDutyCompletionNotification', 'checkWeeklyAdminReport'];
   ScriptApp.getProjectTriggers().forEach(function (trigger) {
     if (managedHandlers.indexOf(trigger.getHandlerFunction()) !== -1) {
       ScriptApp.deleteTrigger(trigger);
@@ -144,11 +287,16 @@ function installTriggers() {
     .atHour(8)
     .create();
 
-  console.log('已建立週四值日提醒與週一 Admin 週報觸發器。');
+  ScriptApp.newTrigger('checkDutyCompletionNotification')
+    .timeBased()
+    .everyMinutes(15)
+    .create();
+
+  console.log('已建立週四值日提醒、每 15 分鐘值日完成通知與週一 Admin 週報觸發器。');
 }
 
 function removeManagedTriggers() {
-  const managedHandlers = ['checkDutyReminder', 'checkWeeklyAdminReport'];
+  const managedHandlers = ['checkDutyReminder', 'checkDutyCompletionNotification', 'checkWeeklyAdminReport'];
   ScriptApp.getProjectTriggers().forEach(function (trigger) {
     if (managedHandlers.indexOf(trigger.getHandlerFunction()) !== -1) {
       ScriptApp.deleteTrigger(trigger);
@@ -164,8 +312,10 @@ function showAutomationStatus() {
     siteUrlConfigured: Boolean(properties[PROPERTY_KEYS.siteUrl]),
     remainingDailyQuota: MailApp.getRemainingDailyQuota(),
     lastSuccessDutyReminder: properties.LAST_SUCCESS_DUTY_REMINDER || null,
+    lastSuccessDutyCompletion: properties.LAST_SUCCESS_DUTY_COMPLETION || null,
     lastSuccessWeeklyReport: properties.LAST_SUCCESS_WEEKLY_ADMIN_REPORT || null,
     lastErrorDutyReminder: properties.LAST_ERROR_DUTY_REMINDER || null,
+    lastErrorDutyCompletion: properties.LAST_ERROR_DUTY_COMPLETION || null,
     lastErrorWeeklyReport: properties.LAST_ERROR_WEEKLY_ADMIN_REPORT || null,
     triggers: ScriptApp.getProjectTriggers().map(function (trigger) {
       return trigger.getHandlerFunction();
@@ -173,15 +323,72 @@ function showAutomationStatus() {
   }, null, 2));
 }
 
-function buildDutySummary_(records, members, weekId) {
+function resolveDutyRecordForWeek_(records, weekId) {
+  const currentRecord = records.find(function (item) { return item._id === weekId; }) || null;
+  if (currentRecord && (
+    currentRecord.submitted
+    || currentRecord.assignment_source === 'admin'
+    || currentRecord.assignment_source === 'substitute'
+    || currentRecord.assignment_source === 'carryover'
+    || hasDutyProgress_(currentRecord)
+  )) {
+    return currentRecord;
+  }
+
+  const previousRecord = records
+    .filter(function (item) { return item._id < weekId; })
+    .sort(function (a, b) { return String(b._id).localeCompare(String(a._id)); })[0] || null;
+  if (!previousRecord || previousRecord.submitted) return currentRecord;
+
+  const scheduledTo = previousRecord.scheduled_to || previousRecord.assigned_to;
+  const assignedTo = previousRecord.assigned_to || scheduledTo;
+  return Object.assign({}, currentRecord || {}, {
+    _id: weekId,
+    week_start: weekId,
+    scheduled_to: scheduledTo,
+    assigned_to: assignedTo,
+    assignment_source: 'carryover',
+    carried_from: previousRecord._id,
+    carryover_count: Number(previousRecord.carryover_count || 0) + 1,
+    submitted: false
+  });
+}
+
+function hasDutyProgress_(record) {
+  if (!record) return false;
+  const cleaning = record.cleaning || {};
+  const supplies = record.supplies || {};
+  return Boolean(
+    String(record.note || '').trim()
+    || record.substitute_pending
+    || Object.keys(cleaning).some(function (key) { return Boolean(cleaning[key]); })
+    || Object.keys(supplies).some(function (key) { return Boolean(supplies[key]); })
+  );
+}
+
+function buildDutySummary_(records, members, weekId, currentWeekId) {
   const record = records.find(function (item) { return item._id === weekId; });
   if (!record) return '<p>上週沒有值日生紀錄。</p>';
 
   const person = members.find(function (member) { return member.Student_ID === record.assigned_to; });
   const name = escapeHtml_(person ? person.Name_Ch : (record.assigned_to || '未指定'));
-  return record.submitted
-    ? '<p>上週值日生（' + name + '）已完成提交。</p>'
-    : '<p style="color:#b91c1c;"><strong>待確認：</strong>上週值日生（' + name + '）尚未提交。</p>';
+  if (record.submitted) return '<p>上週值日生（' + name + '）已完成提交。</p>';
+
+  const currentRecord = resolveDutyRecordForWeek_(records, currentWeekId);
+  const currentPerson = currentRecord
+    ? members.find(function (member) { return member.Student_ID === currentRecord.assigned_to; })
+    : null;
+  const currentName = escapeHtml_(currentPerson
+    ? currentPerson.Name_Ch
+    : (currentRecord && currentRecord.assigned_to) || '未指定');
+
+  if (currentRecord && currentRecord.assignment_source === 'carryover' && currentRecord.carried_from === weekId) {
+    return '<p style="color:#b91c1c;"><strong>上週未完成：</strong>值日生（' + name + '）尚未提交，已順延至本週由 <strong>' + currentName + '</strong> 繼續。</p>';
+  }
+  if (currentRecord && currentRecord.assignment_source === 'admin') {
+    return '<p style="color:#b91c1c;"><strong>上週未完成：</strong>值日生（' + name + '）尚未提交；本週已由 Admin 指定 <strong>' + currentName + '</strong>，因此未自動順延。</p>';
+  }
+  return '<p style="color:#b91c1c;"><strong>待確認：</strong>上週值日生（' + name + '）尚未提交，且目前無法確認本週承接者。</p>';
 }
 
 function buildRoutineSummary_(routines, today) {
@@ -335,15 +542,30 @@ function runJob_(jobName, callback) {
 }
 
 function sendEmail_(message) {
-  if (MailApp.getRemainingDailyQuota() < 1) {
-    throw new Error('GAS 今日寄信配額已用完。');
+  const requiredQuota = countEmailRecipients_(message.to)
+    + countEmailRecipients_(message.cc)
+    + countEmailRecipients_(message.bcc);
+  const remainingQuota = MailApp.getRemainingDailyQuota();
+  if (remainingQuota < requiredQuota) {
+    throw new Error('GAS 今日寄信配額不足：需要 ' + requiredQuota + '，剩餘 ' + remainingQuota + '。');
   }
-  MailApp.sendEmail({
+  const options = {
     to: message.to,
     subject: message.subject,
     htmlBody: message.htmlBody,
     name: 'GOODLAB'
-  });
+  };
+  if (message.cc) options.cc = message.cc;
+  if (message.bcc) options.bcc = message.bcc;
+  MailApp.sendEmail(options);
+}
+
+function countEmailRecipients_(value) {
+  return String(value || '')
+    .split(',')
+    .map(function (email) { return email.trim(); })
+    .filter(Boolean)
+    .length;
 }
 
 function emailLayout_(title, body) {
@@ -369,17 +591,73 @@ function limitedListHtml_(items, renderItem) {
   return html;
 }
 
-function siteLinkHtml_(label) {
-  const url = PropertiesService.getScriptProperties().getProperty(PROPERTY_KEYS.siteUrl) || '';
-  if (!/^https:\/\//i.test(url)) return '';
+function siteLinkHtml_(label, route) {
+  const url = siteUrl_(route);
+  if (!url) return '';
   return '<p><a href="' + escapeHtml_(url) + '" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#1d4ed8;color:#fff;text-decoration:none;">'
     + escapeHtml_(label) + '</a></p>';
+}
+
+function siteUrlTextHtml_(route) {
+  const url = siteUrl_(route);
+  if (!url) return '';
+  return '<p style="font-size:13px;color:#526075;word-break:break-all;">若按鈕無法開啟，可複製網址：<br>'
+    + '<a href="' + escapeHtml_(url) + '" style="color:#1d4ed8;">' + escapeHtml_(url) + '</a></p>';
+}
+
+function siteUrl_(route) {
+  const configuredUrl = (PropertiesService.getScriptProperties().getProperty(PROPERTY_KEYS.siteUrl) || '').trim();
+  if (!/^https:\/\//i.test(configuredUrl)) return '';
+
+  const cleanRoute = String(route || '').replace(/^#?\/?/, '').replace(/^\/+|\/+$/g, '');
+  if (!cleanRoute) return configuredUrl;
+
+  const baseUrl = configuredUrl.replace(/#.*$/, '').replace(/\/+$/, '');
+  return baseUrl + '/#/' + cleanRoute;
 }
 
 function getRequiredProperty_(key) {
   const value = (PropertiesService.getScriptProperties().getProperty(key) || '').trim();
   if (!value) throw new Error('尚未設定 Script Property：' + key);
   return value;
+}
+
+function getActiveStudentEmails_(members) {
+  const studentDegrees = ['master', 'phd', 'bachelor', 'undergraduate', 'undergrad'];
+  return members
+    .filter(function (member) {
+      return member.Status === 'Active'
+        && studentDegrees.indexOf(String(member.Degree || '').toLowerCase()) !== -1
+        && isEmail_(member.Email);
+    })
+    .map(function (member) { return String(member.Email).trim(); })
+    .filter(unique_);
+}
+
+function getNextDutyMember_(record, members, dutyRecords) {
+  const weekId = record.week_start || record._id;
+  const nextWeekId = shiftDateKey_(weekId, 7);
+  const nextRecord = dutyRecords.find(function (item) { return item._id === nextWeekId; });
+  const nextAssignedTo = nextRecord && (nextRecord.assigned_to || nextRecord.scheduled_to);
+  if (nextAssignedTo) {
+    const explicitlyAssigned = members.find(function (member) { return member.Student_ID === nextAssignedTo; });
+    if (explicitlyAssigned) return explicitlyAssigned;
+  }
+
+  const roster = members
+    .filter(function (member) {
+      return member.Degree === 'Master' && member.Role !== 'Admin' && member.Status === 'Active';
+    })
+    .sort(function (a, b) { return String(a.Student_ID).localeCompare(String(b.Student_ID)); });
+  if (!roster.length) return null;
+
+  const scheduledTo = record.scheduled_to || record.assigned_to;
+  const currentIndex = roster.findIndex(function (member) { return member.Student_ID === scheduledTo; });
+  return roster[(currentIndex >= 0 ? currentIndex + 1 : 0) % roster.length];
+}
+
+function dutyCompletionPropertyKey_(weekId) {
+  return DUTY_COMPLETION_SENT_PREFIX + String(weekId || '').replace(/[^0-9A-Za-z_]/g, '_');
 }
 
 function dateKey_(date) {
