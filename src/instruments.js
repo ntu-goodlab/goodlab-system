@@ -219,8 +219,14 @@ export const instrumentsModule = {
         const modal = document.getElementById('inst-modal');
         const btnDel = document.getElementById('btn-del-i');
         const inputs = document.querySelectorAll('#inst-modal input, #inst-modal select');
+        const inst = id ? this.data.instruments.find(x => x.Instrument_ID === id) : null;
+
+        if (id && !inst) {
+            this.showNotification('找不到該筆儀器資料，請重新整理頁面。', 'error');
+            return;
+        }
         
-        this.fillMemberSelect('Manager_ID');
+        this.fillMemberSelect('Manager_ID', inst?.Manager_ID || '');
         const locSelect = modal.querySelector('#Location');
         // ★ Phase 2：改用 constants.js 的 LOCATIONS 常數，不再動態從資料建構
         locSelect.innerHTML = '<option value="">請選擇區域</option>' + LOCATIONS.map(loc => `<option value="${loc}">${loc}</option>`).join('');
@@ -230,7 +236,6 @@ export const instrumentsModule = {
         if (id) {
             document.getElementById('i-modal-title').innerText = "編輯儀器";
             if (btnDel) btnDel.classList.remove('hidden');
-            const inst = this.data.instruments.find(x => x.Instrument_ID === id);
             this.currentEditingInstTags = inst.Linked_Property_IDs ? [...inst.Linked_Property_IDs] : [];
 
             inputs.forEach(el => {

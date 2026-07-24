@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:select-options": "node --test tests/select-options.test.mjs",
     "test:routine": "node --test tests/routine-schedule.test.mjs",
     "preview": "vite preview"
   },

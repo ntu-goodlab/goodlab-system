@@ -7,6 +7,7 @@ import { db, doc, setDoc } from './firebase.js';
 import { LOCATIONS_WITH_OTHER } from './constants.js';
 import { UI } from '../shared.js';
 import { generateId, formatDateForInput } from './utils.js';
+import { fillInstrumentSelect } from './ui.js';
 
 export const logsModule = {
 
@@ -162,7 +163,7 @@ export const logsModule = {
         const title = data ? '編輯維修紀錄' : '回報維修問題';
 
         // 2. 初始化所有下拉選單 (人員、區域)
-        this.fillMemberSelect('Owner_ID'); 
+        this.fillMemberSelect('Owner_ID', data?.Owner_ID || '');
         
         const locSelect = document.getElementById('Log_Location_Filter');
         // ★ Phase 2：改用 constants.js 的 LOCATIONS_WITH_OTHER，移除硬編碼陣列
@@ -255,30 +256,16 @@ export const logsModule = {
     // === 依區域篩選儀器下拉選單 ===
     filterLogInstruments: function(targetArea = null, targetInstId = null) {
         const locSelect = document.getElementById('Log_Location_Filter');
-        const instSelect = document.getElementById('Log_Instrument_ID');
 
         // 如果有傳入 targetArea (開窗時)，優先使用；否則抓畫面上的值 (onchange 時)
         const loc = targetArea !== null ? targetArea : locSelect.value;
         
-        if (!loc) {
-            instSelect.innerHTML = '<option value="">請先選擇實驗區域...</option>';
-            return;
-        }
-
-        // 過濾出該區域「未報廢」的儀器
-        const filteredInsts = this.data.instruments.filter(i => i.Is_Active && i.Location === loc);
-        
-        if (filteredInsts.length === 0) {
-            instSelect.innerHTML = '<option value="">該區域無設備...</option>';
-        } else {
-            instSelect.innerHTML = '<option value="">請選擇故障儀器...</option>' + 
-                filteredInsts.map(i => `<option value="${i.Instrument_ID}">${i.Name}</option>`).join('');
-        }
-
-        // 如果有指定特定的儀器 (編輯模式)，則自動選取它
-        if (targetInstId) {
-            instSelect.value = targetInstId;
-        }
+        fillInstrumentSelect(
+            'Log_Instrument_ID',
+            this.data.instruments,
+            loc,
+            targetInstId || ''
+        );
     },
 
     // === Log 狀態自動連動 (結案時自動填日期) ===

@@ -197,14 +197,19 @@ export const accountingModule = {
         const modal = document.getElementById('acc-modal');
         const btnDel = document.getElementById('btn-del-a');
         const inputs = document.querySelectorAll('#acc-modal input, #acc-modal select, #acc-modal textarea');
+        const acc = id ? this.data.accounting.find(x => x.Txn_ID === id) : null;
+
+        if (id && !acc) {
+            showNotification('找不到該筆帳務紀錄，請重新整理頁面。', 'error');
+            return;
+        }
         
-        fillPayerSelect('Acc_Payer', this.data.members);
+        fillPayerSelect('Acc_Payer', this.data.members, acc?.Payer || 'Fund');
         inputs.forEach(el => el.value = '');
 
         if (id) {
             document.getElementById('a-modal-title').innerText = "編輯帳務";
             if (btnDel) btnDel.classList.remove('hidden');
-            const acc = this.data.accounting.find(x => x.Txn_ID === id);
             
             document.getElementById('Txn_ID').value = acc.Txn_ID;
             document.getElementById('Acc_Type').value = acc.Type;

@@ -135,11 +135,11 @@ const app = {
     showNotification,
     closeModal,
     populateLocationSelects,
-    fillMemberSelect: function(selectId) {
-        fillMemberSelect(selectId, this.data.members);
+    fillMemberSelect: function(selectId, selectedId = '') {
+        fillMemberSelect(selectId, this.data.members, selectedId);
     },
-    fillPayerSelect: function(selectId) {
-        fillPayerSelect(selectId, this.data.members);
+    fillPayerSelect: function(selectId, selectedId = '') {
+        fillPayerSelect(selectId, this.data.members, selectedId);
     },
     getMemberName: function(id) {
         return getMemberName(this.data.members, id);

@@ -3,6 +3,11 @@
  * 將 shared.js 的邏輯搬入 src 目錄，並整合 script.js 中散落的 UI 工具。
  */
 import { LOCATIONS, LOCATIONS_WITH_OTHER } from './constants.js';
+import {
+    buildInstrumentSelectItems,
+    buildMemberSelectItems,
+    buildPayerSelectItems
+} from './select-options.js';
 
 // === 通知系統 ===
 export function showNotification(msg, type = 'info', duration = 3000) {
@@ -86,32 +91,52 @@ export function populateLocationSelects() {
     });
 }
 
-export function fillMemberSelect(selectId, members) {
-    const select = document.getElementById(selectId);
-    if (!select) return;
+function replaceSelectOptions(select, placeholder, items, selectedId = '') {
+    select.textContent = '';
 
-    if (!members || members.length === 0) {
-        select.innerHTML = '<option value="">(讀取中或無成員資料)</option>';
-        return;
-    }
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = '';
+    placeholderOption.textContent = placeholder;
+    select.appendChild(placeholderOption);
 
-    let activeMembers = members.filter(m => m.Status === 'Active');
-    if (activeMembers.length === 0) activeMembers = members;
+    items.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        select.appendChild(option);
+    });
 
-    const options = activeMembers.map(m =>
-        `<option value="${m.Student_ID}">${m.Name_Ch} (${m.Student_ID})</option>`
-    ).join('');
-
-    select.innerHTML = '<option value="">(請選擇人員)</option>' + options;
+    if (selectedId) select.value = String(selectedId);
 }
 
-export function fillPayerSelect(selectId, members) {
+export function fillMemberSelect(selectId, members, selectedId = '') {
     const select = document.getElementById(selectId);
     if (!select) return;
-    const memberOpts = members.filter(m => m.Status === 'Active').map(m =>
-        `<option value="${m.Student_ID}">${m.Name_Ch}</option>`
-    ).join('');
-    select.innerHTML = `<option value="Fund">公積金戶頭 (Fund)</option>` + memberOpts;
+
+    const items = buildMemberSelectItems(members, selectedId);
+    const placeholder = (!members || members.length === 0) && !selectedId
+        ? '(讀取中或無成員資料)'
+        : '(請選擇人員)';
+    replaceSelectOptions(select, placeholder, items, selectedId);
+}
+
+export function fillPayerSelect(selectId, members, selectedId = '') {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    const items = buildPayerSelectItems(members, selectedId);
+    replaceSelectOptions(select, '(請選擇付款人)', items, selectedId || 'Fund');
+}
+
+export function fillInstrumentSelect(selectId, instruments, location = '', selectedId = '') {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+
+    const items = buildInstrumentSelectItems(instruments, location, selectedId);
+    const placeholder = !location && !selectedId
+        ? '請先選擇實驗區域...'
+        : (items.length === 0 ? '該區域無設備...' : '請選擇故障儀器...');
+    replaceSelectOptions(select, placeholder, items, selectedId);
 }
 
 // === 複製到剪貼簿 ===
