@@ -30,7 +30,15 @@ export function formatDateForInput(dateStr) {
 export function getMemberName(members, id) {
     if (!id) return '';
     if (id === 'Fund') return '公積金';
-    const m = members.find(x => x.Student_ID === id || x.Google_UID === id);
+    const normalizedId = String(id).trim().toLowerCase();
+    const m = members.find(x =>
+        String(x.Student_ID || '').trim().toLowerCase() === normalizedId
+        || x.Google_UID === id
+        || (x.Previous_Google_UIDs || []).includes(id)
+        || (x.Previous_Student_IDs || []).some(previous =>
+            String(previous || '').trim().toLowerCase() === normalizedId
+        )
+    );
     return m ? m.Name_Ch : id;
 }
 

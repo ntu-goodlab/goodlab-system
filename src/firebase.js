@@ -3,7 +3,7 @@
  * Phase 4：集中管理 Firebase 連線，所有其他模組從此處引入 db、auth 等。
  */
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, writeBatch, arrayUnion, query, where } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, writeBatch, runTransaction, arrayUnion, query, where } from 'firebase/firestore';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -23,6 +23,6 @@ const provider = new GoogleAuthProvider();
 // 統一匯出，讓其他模組可以直接引用
 export {
     db, auth, provider,
-    collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, writeBatch, arrayUnion, query, where,
+    collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, writeBatch, runTransaction, arrayUnion, query, where,
     signInWithPopup, onAuthStateChanged, signOut
 };

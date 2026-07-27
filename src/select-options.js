@@ -40,6 +40,17 @@ export function buildMemberSelectItems(members, selectedId = '', { showStudentId
             label: getLabel(member)
         }));
 
+    const selected = normalizeId(selectedId);
+    const aliasMember = selected
+        ? records.find(member => (member?.Previous_Student_IDs || []).some(id => normalizeId(id) === selected))
+        : null;
+    if (aliasMember && !items.some(item => item.value === selected)) {
+        items.push({
+            value: selected,
+            label: `${getLabel(aliasMember)}（曾用學號）`
+        });
+    }
+
     return appendSelectedLegacyItem(
         items,
         records,

@@ -534,6 +534,7 @@ export const employmentModule = {
                         const warnings = lowDeclaredMonths(employment, months);
                         return `<div class="employment-person-record">
                             <div class="employment-person-record-title"><strong>${escapeHtml(projectName)}</strong>${employment.schema_version === 2 ? '' : '<span class="legacy-badge">舊格式</span>'}</div>
+                            ${employment.original_student_id ? `<p class="employment-record-original-id">原始申報學號：${escapeHtml(employment.original_student_id)}</p>` : ''}
                             <dl>
                                 <div><dt>申報聘僱期間</dt><dd>${formatRocMonth(employment.declared_start_month)}～${formatRocMonth(employment.declared_end_month)}</dd></div>
                                 <div><dt>基本月額</dt><dd>${formatMoney(employment.base_monthly_amount)}</dd></div>
@@ -1120,7 +1121,7 @@ export const employmentModule = {
             const member = this.data.members.find(item => item.Student_ID === employment.student_id);
             const project = projects.find(item => item._id === employment.project_id);
             return {
-                '學號': employment.student_id,
+                '學號': employment.original_student_id || employment.student_id,
                 '姓名': member?.Name_Ch || '',
                 '計畫名稱': project?.name || '',
                 '計畫編號': project?.project_number || '',
@@ -1144,7 +1145,7 @@ export const employmentModule = {
             months.forEach(month => {
                 const override = employment.month_overrides[month];
                 monthRows.push({
-                    '學號': employment.student_id,
+                    '學號': employment.original_student_id || employment.student_id,
                     '姓名': member?.Name_Ch || '',
                     '計畫名稱': project?.name || '',
                     '年月': formatRocMonth(month),

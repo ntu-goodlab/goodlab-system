@@ -10,20 +10,21 @@ import {
 const members = [
     { Student_ID: 'active01', Name_Ch: '在學同學', Status: 'Active' },
     { Student_ID: 'alumni01', Name_Ch: '畢業同學', Status: 'Graduated' },
-    { Student_ID: 'alumni02', Name_Ch: '另一位畢業同學', Status: 'Graduated' }
+    { Student_ID: 'alumni02', Name_Ch: '另一位畢業同學', Status: 'Graduated' },
+    { Student_ID: 'current02', Name_Ch: '換過學號同學', Status: 'Active', Previous_Student_IDs: ['former02'] }
 ];
 
 test('新增資料只列出目前在學成員', () => {
     assert.deepEqual(
         buildMemberSelectItems(members).map(item => item.value),
-        ['active01']
+        ['active01', 'current02']
     );
 });
 
 test('編輯舊資料時保留原本的畢業成員，但不帶入其他畢業成員', () => {
     const items = buildMemberSelectItems(members, 'alumni01');
 
-    assert.deepEqual(items.map(item => item.value), ['active01', 'alumni01']);
+    assert.deepEqual(items.map(item => item.value), ['active01', 'current02', 'alumni01']);
     assert.match(items.at(-1).label, /畢業同學.*已離校/);
 });
 
@@ -34,6 +35,12 @@ test('成員主檔已刪除時仍保留舊識別碼', () => {
     );
 });
 
+test('舊資料仍引用曾用學號時顯示目前成員名稱', () => {
+    const item = buildMemberSelectItems(members, 'former02').find(option => option.value === 'former02');
+
+    assert.match(item.label, /換過學號同學.*曾用學號/);
+});
+
 test('帳務付款人保留畢業成員，且公積金選項不重複', () => {
     const fundItems = buildPayerSelectItems(members, 'Fund');
     const alumniItems = buildPayerSelectItems(members, 'alumni01');
@@ -41,7 +48,7 @@ test('帳務付款人保留畢業成員，且公積金選項不重複', () => {
     assert.equal(fundItems.filter(item => item.value === 'Fund').length, 1);
     assert.deepEqual(
         alumniItems.map(item => item.value),
-        ['Fund', 'active01', 'alumni01']
+        ['Fund', 'active01', 'current02', 'alumni01']
     );
     assert.match(alumniItems.at(-1).label, /畢業同學.*已離校/);
 });

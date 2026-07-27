@@ -338,10 +338,10 @@
     </div>
 
     <div id="member-modal" class="modal hidden">
-        <div class="modal-content" style="max-width: 650px;">
+        <div class="modal-content member-dialog">
             <div class="modal-header"><h3 id="m-modal-title">新增成員</h3><span class="close" onclick="app.closeModal('member-modal')">&times;</span></div>
-            <div class="modal-body" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px;">
-                <div class="form-group"><label>學號 (唯一 ID)</label><input type="text" id="Student_ID" placeholder="例如：R12943xxx"></div>
+            <div class="modal-body member-form-grid">
+                <div class="form-group"><label for="Student_ID">學號</label><input type="text" id="Student_ID" placeholder="例如：R12943xxx"></div>
                 <div class="form-group"><label>中文姓名</label><input type="text" id="Name_Ch"></div>
                 
                 <div class="form-group"><label>英文姓氏 (Surname)</label><input type="text" id="Surname_En"></div>
@@ -372,9 +372,76 @@
                 <div class="form-group" style="grid-column: 1 / -1;"><label>Google 綁定狀態</label>
                     <div style="display:flex; gap:10px;">
                         <input type="text" id="Bind_Status" disabled style="background: var(--bg-page); color: var(--text-muted); font-weight: bold;">
-                        <button id="btn-unbind" class="btn btn-danger hidden" onclick="app.unbindMember()"><i class="ph ph-link-break"></i> 解除綁定</button>
+                        <button type="button" id="btn-unbind" class="btn btn-danger hidden" onclick="app.unbindMember()"><i class="ph ph-link-break"></i> 解除綁定</button>
                     </div>
                 </div>
+                <div class="form-group member-previous-ids-group" id="member-previous-ids-group" hidden>
+                    <label>曾用學號</label>
+                    <div class="member-previous-ids" id="member-previous-ids">無</div>
+                </div>
+                <div class="member-id-change-entry hidden" id="member-id-change-entry">
+                    <div>
+                        <strong>學號異動</strong>
+                        <span>逕博或重新入學時，建立新學號並轉移原有資料。</span>
+                    </div>
+                    <button type="button" id="btn-open-member-id-migration" class="btn btn-secondary hidden" onclick="app.openMemberIdMigration()" aria-controls="member-id-migration">
+                        <i class="ph ph-arrows-left-right" aria-hidden="true"></i> 變更學號
+                    </button>
+                </div>
+                <section id="member-id-migration" class="member-id-migration hidden" hidden aria-labelledby="member-id-migration-title">
+                    <div class="member-migration-heading">
+                        <div>
+                            <span class="eyebrow">管理員操作</span>
+                            <h4 id="member-id-migration-title">轉移成員學號</h4>
+                            <p>系統會建立新學號、精確更新關聯資料，全部成功後才移除舊學號。</p>
+                        </div>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="app.cancelMemberIdMigration()">取消異動</button>
+                    </div>
+                    <fieldset class="member-migration-fields">
+                        <legend class="sr-only">學號異動資料</legend>
+                        <div class="form-group">
+                            <label for="migration-old-id">原學號</label>
+                            <input type="text" id="migration-old-id" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="migration-new-id">新學號 <span aria-hidden="true">*</span></label>
+                            <input type="text" id="migration-new-id" autocomplete="off" spellcheck="false" required aria-describedby="migration-new-id-help migration-error" oninput="app.handleMemberMigrationNewIdInput()">
+                            <small id="migration-new-id-help" class="form-help">輸入後會先預覽所有受影響資料，不會立即寫入。</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="migration-new-email">新電子信箱</label>
+                            <input type="email" id="migration-new-email" oninput="app.markMemberMigrationEmailEdited()" aria-describedby="migration-error">
+                        </div>
+                        <div class="form-group">
+                            <label for="migration-new-degree">新學位</label>
+                            <select id="migration-new-degree" onchange="app.handleMemberMigrationOptionChange()">
+                                <option value="Master">碩士</option>
+                                <option value="PhD">博士</option>
+                                <option value="Undergrad">大學部</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="migration-new-enrollment-date">新入學日期</label>
+                            <input type="date" id="migration-new-enrollment-date" onchange="app.handleMemberMigrationOptionChange()">
+                        </div>
+                    </fieldset>
+                    <label class="member-migration-check" for="migration-preserve-binding">
+                        <input type="checkbox" id="migration-preserve-binding" onchange="app.handleMemberMigrationOptionChange()">
+                        <span><strong>保留目前 Google 綁定</strong><small>若改用另一個 Google 帳號，取消勾選並讓成員下次重新綁定。</small></span>
+                    </label>
+                    <div id="migration-error" class="member-migration-error" role="alert" aria-live="assertive"></div>
+                    <div id="migration-impact" class="member-migration-impact" aria-live="polite" aria-atomic="true"></div>
+                    <label class="member-migration-check member-migration-confirm" for="migration-confirm">
+                        <input type="checkbox" id="migration-confirm" disabled onchange="app.updateMemberIdMigrationPreview()">
+                        <span id="migration-confirm-text">輸入新學號後才能確認轉移。</span>
+                    </label>
+                    <div class="member-migration-actions">
+                        <button type="button" class="btn btn-secondary" onclick="app.cancelMemberIdMigration()">取消</button>
+                        <button type="button" class="btn btn-danger" id="btn-execute-member-id-migration" onclick="app.executeMemberIdMigration()" disabled>
+                            <i class="ph ph-arrows-left-right" aria-hidden="true"></i> 確認並執行轉移
+                        </button>
+                    </div>
+                </section>
             </div>
             <div class="modal-footer">
                 <button onclick="app.deleteRecord('members', document.getElementById('Student_ID').value, 'member-modal')" class="btn btn-danger hidden" id="btn-del-m" style="margin-right: auto;">刪除人員</button>

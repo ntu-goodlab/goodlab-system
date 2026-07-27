@@ -47,6 +47,7 @@ const app = {
     currentMember: null, // Phase 5: 當前登入的 member 完整資料
     membersLoaded: false,
     realtimeUnsubscribers: new Map(),
+    realtimeLoadState: {},
     realtimeProfile: 'Anonymous',
     modalReturnFocus: new Map(),
 
@@ -64,7 +65,7 @@ const app = {
             <p style="margin-bottom: 10px;">本模組負責管理實驗室成員資料、帳號綁定與系統操作權限。</p>
             <ul style="margin-top: 10px; padding-left: 20px; line-height: 1.6;">
                 <li><strong>帳號綁定流程：</strong>新生需先由 Admin 於此處建立「學號」。新生使用 Google 帳號登入系統後，輸入該學號即可完成系統綁定。</li>
-                <li><strong>資料不可變性：</strong>學號 (Student_ID) 為系統底層之唯一識別碼，建立存檔後即無法變更。</li>
+                <li><strong>學號異動：</strong>逕博或重新入學時，請從成員編輯頁使用「變更學號」，系統會先預覽並一次轉移相關資料。</li>
                 <li><strong>權限層級說明：</strong>
                     <ul>
                         <li><span style="color: var(--primary); font-weight: 600;">Admin：</span>具備全站最高權限，可進行資料增刪查改、產編匯入與公積金管理。</li>
@@ -355,6 +356,7 @@ const app = {
             if (!allowed.has(name)) {
                 unsubscribe();
                 this.realtimeUnsubscribers.delete(name);
+                delete this.realtimeLoadState[name];
                 this.data[config[name].dataKey] = [];
             }
         }
@@ -363,15 +365,26 @@ const app = {
             if (this.realtimeUnsubscribers.has(name)) return;
             const item = config[name];
             const source = item.source ? item.source() : collection(db, item.collectionName || name);
+            this.realtimeLoadState[name] = 'loading';
             const unsubscribe = onSnapshot(source, snapshot => {
+                this.realtimeLoadState[name] = 'loaded';
                 this.data[item.dataKey] = snapshot.docs.map(document => item.withId ? ({ _id: document.id, ...document.data() }) : document.data());
                 item.onData();
+                const migrationPanel = document.getElementById('member-id-migration');
+                if (migrationPanel && !migrationPanel.classList.contains('hidden')) {
+                    this.updateMemberIdMigrationPreview?.();
+                }
             }, error => {
+                this.realtimeLoadState[name] = 'error';
                 this.data[item.dataKey] = [];
                 if (name === 'members') this.membersLoaded = true;
                 console.warn(`[GOODLAB] ${name} listener unavailable: ${error.code || error.message}`);
                 if (this.currentUser) this.showNotification(`無法載入${item.collectionName || name}資料，請重新整理或聯絡管理員。`, 'error');
                 item.onData();
+                const migrationPanel = document.getElementById('member-id-migration');
+                if (migrationPanel && !migrationPanel.classList.contains('hidden')) {
+                    this.updateMemberIdMigrationPreview?.();
+                }
             });
             this.realtimeUnsubscribers.set(name, unsubscribe);
         });
