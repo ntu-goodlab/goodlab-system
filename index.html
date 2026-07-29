@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="style.css">
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 </head>
 <body>
     <button class="skip-link" type="button" onclick="document.getElementById('main-content').focus()">跳到主要內容</button>
@@ -86,21 +87,7 @@
                         <div class="filters"><input type="text" id="search-member" aria-label="搜尋成員姓名或學號" placeholder="搜尋姓名、學號..." oninput="app.renderMembers()" style="width:100%;"></div>
                         <button onclick="app.openMemberModal()" class="btn btn-primary admin-only">新增成員</button>
                     </div>
-                    <div class="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th style="width:80px; text-align:center;">狀態</th>
-                                    <th>姓名</th>
-                                    <th class="hide-mobile">學號</th>
-                                    <th class="hide-mobile">系所</th>
-                                    <th style="width:100px;">權限</th>
-                                    <th style="width:80px; text-align:center;">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="member-tbody"></tbody>
-                        </table>
-                    </div>
+                    <div id="member-list" class="member-directory" aria-live="polite"></div>
                 </section>
 
                 <section id="page-instruments" class="page-section">
@@ -140,7 +127,7 @@
                 <section id="page-logs" class="page-section">
                     <div class="action-bar">
                         <div class="filters">
-                            <input type="text" id="search-log" aria-label="搜尋維修問題" placeholder="搜尋問題..." oninput="app.renderLogs()">
+                            <input type="text" id="search-log" aria-label="搜尋儀器、維修問題或解決方案" placeholder="搜尋儀器、問題或解決方案..." oninput="app.renderLogs()">
                             <div class="filter-group">
                                 <button class="btn-filter filter-chip" data-val="All" onclick="app.setLogFilter('All')">全部</button>
                                 <button class="btn-filter filter-chip active" data-val="Open" onclick="app.setLogFilter('Open')">待處理</button>
@@ -155,7 +142,7 @@
                                 <tr>
                                     <th style="width:80px; text-align:center;">狀態</th>
                                     <th style="width:60px; text-align:center;">緊急</th>
-                                    <th style="width:110px;">日期</th>
+                                    <th class="log-date-cell" style="width:128px;">日期</th>
                                     <th style="width:150px;">儀器名稱</th>
                                     <th class="hide-mobile">問題描述</th>
                                     <th class="hide-mobile">解決方案</th>
@@ -548,7 +535,20 @@
                 </div>
 
                 <div class="form-group" id="grp-recharge"><label>回沖日期 (若學校已入帳)</label><input type="date" id="Recharge_Date"></div>
-                <div class="form-group" id="grp-payback"><label>還款日期 (若已還學生)</label><input type="date" id="Payback_Date"></div>
+                <div id="grp-payback" class="accounting-payback-grid">
+                    <div class="form-group">
+                        <label for="Payback_Date">還款日期（若已還學生）</label>
+                        <input type="date" id="Payback_Date">
+                    </div>
+                    <fieldset class="form-group accounting-method-field">
+                        <legend>還款方式</legend>
+                        <input type="hidden" id="Payback_Method" value="Bank">
+                        <div class="filter-group" role="group" aria-label="還款方式">
+                            <button type="button" class="btn-filter filter-chip active" id="btn-pm-bank" aria-pressed="true" onclick="app.setPaybackMethod('Bank')">戶頭轉帳</button>
+                            <button type="button" class="btn-filter filter-chip" id="btn-pm-cash" aria-pressed="false" onclick="app.setPaybackMethod('Cash')">現金</button>
+                        </div>
+                    </fieldset>
+                </div>
                 <div class="form-group"><label>發票/單據雲端連結</label><input type="text" id="Invoice_Link" placeholder="https://..."></div>
                 <div class="form-group"><label>備註</label><textarea id="Acc_Remark" rows="2"></textarea></div>
             </div>

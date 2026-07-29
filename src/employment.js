@@ -3,7 +3,7 @@
  *
  * v2 資料模型（舊欄位仍可讀取）：
  * projects/{id}: {
- *   name, project_number, project_code, start_month, end_month, status,
+ *   name, project_number, project_code, color_key, start_month, end_month, status,
  *   semester_budgets: { "115-1": { available, updated_at } }
  * }
  * employments/{id}: {
@@ -15,11 +15,27 @@
  */
 import { db, doc, setDoc, writeBatch } from './firebase.js';
 import { generateId } from './utils.js';
+import {
+    PROJECT_COLOR_OPTIONS,
+    buildEmploymentExportWindow,
+    buildScheduleSegments,
+    resolveProjectColorKey
+} from './employment-timeline.js';
 
 const ROC_OFFSET = 1911;
 const EMPLOYMENT_VIEWS = ['people', 'projects'];
 const EMPLOYMENT_PEOPLE_VIEWS = ['list', 'timeline'];
 const MIN_PROJECT_MONTHLY_AMOUNT = 6000;
+const EMPLOYMENT_EXCEL_PROJECT_COLORS = {
+    amber: { fill: 'FFFFEDD5', border: 'FFC2410C', text: 'FF7C2D12' },
+    blue: { fill: 'FFDBEAFE', border: 'FF2563EB', text: 'FF1E3A8A' },
+    violet: { fill: 'FFEDE9FE', border: 'FF7C3AED', text: 'FF4C1D95' },
+    teal: { fill: 'FFCCFBF1', border: 'FF0F766E', text: 'FF134E4A' },
+    rose: { fill: 'FFFFE4E6', border: 'FFE11D48', text: 'FF881337' },
+    sky: { fill: 'FFE0F2FE', border: 'FF0284C7', text: 'FF0C4A6E' },
+    lime: { fill: 'FFECFCCB', border: 'FF65A30D', text: 'FF365314' },
+    slate: { fill: 'FFE7EEF8', border: 'FF516B91', text: 'FF243B5A' }
+};
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -137,13 +153,17 @@ function rangesOverlap(startKey, endKey, months) {
     return months.some(month => range.has(month));
 }
 
-function currentSemester() {
-    const now = new Date();
+function currentSemester(referenceDate = new Date()) {
+    const now = referenceDate;
     const rocYear = now.getFullYear() - ROC_OFFSET;
     const month = now.getMonth() + 1;
     if (month >= 8) return { academicYear: rocYear, term: 1 };
     if (month === 1) return { academicYear: rocYear - 1, term: 1 };
     return { academicYear: rocYear - 1, term: 2 };
+}
+
+function currentMonthKey(referenceDate = new Date()) {
+    return `${referenceDate.getFullYear()}-${String(referenceDate.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function semesterKey(academicYear, term) {
@@ -199,6 +219,7 @@ function normalizeProject(raw) {
         start_month: normalizeMonthKey(raw.start_month),
         end_month: normalizeMonthKey(raw.end_month) || legacyEnd,
         status: raw.status || 'active',
+        color_key: resolveProjectColorKey(raw),
         semester_budgets: raw.semester_budgets && typeof raw.semester_budgets === 'object' ? raw.semester_budgets : {}
     };
 }
@@ -344,12 +365,14 @@ export const employmentUtils = {
     parseStudentIdForSort,
     semesterKey,
     semesterLabel,
-    shiftSemester
+    shiftSemester,
+    buildScheduleSegments,
+    resolveProjectColorKey
 };
 
 export const employmentModule = {
     empView: 'people',
-    empPeopleView: 'list',
+    empPeopleView: 'timeline',
     empAmountMode: 'average',
     empAcademicYear: null,
     empTerm: null,
@@ -363,7 +386,7 @@ export const employmentModule = {
 
     _ensureEmploymentState: function() {
         if (!EMPLOYMENT_VIEWS.includes(this.empView)) this.empView = 'people';
-        if (!EMPLOYMENT_PEOPLE_VIEWS.includes(this.empPeopleView)) this.empPeopleView = 'list';
+        if (!EMPLOYMENT_PEOPLE_VIEWS.includes(this.empPeopleView)) this.empPeopleView = 'timeline';
         if (this.empAcademicYear === null || this.empTerm === null) {
             const semester = currentSemester();
             this.empAcademicYear = semester.academicYear;
@@ -422,10 +445,19 @@ export const employmentModule = {
 
     _renderSemesterNavigator: function() {
         const months = this._semesterMonths();
+        const current = currentSemester();
+        const isCurrent = current.academicYear === this.empAcademicYear && current.term === this.empTerm;
+        const currentControl = isCurrent
+            ? '<span class="semester-current-state"><i class="ph ph-calendar-check" aria-hidden="true"></i>本學期</span>'
+            : '<button type="button" class="btn btn-secondary btn-sm semester-current-button" onclick="app.goToCurrentEmploymentSemester()"><i class="ph ph-calendar-check" aria-hidden="true"></i>回到本學期</button>';
+
         return `<div class="semester-navigator" aria-label="學期切換">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="app.changeEmploymentSemester(-1)" aria-label="上一學期"><i class="ph ph-caret-left" aria-hidden="true"></i></button>
-            <div class="semester-label"><strong>${semesterLabel(this.empAcademicYear, this.empTerm)}</strong><span>${formatRocMonth(months[0])}～${formatRocMonth(months[months.length - 1])}</span></div>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="app.changeEmploymentSemester(1)" aria-label="下一學期"><i class="ph ph-caret-right" aria-hidden="true"></i></button>
+            <div class="semester-nav-controls">
+                <button type="button" class="btn btn-secondary btn-sm semester-arrow-button" onclick="app.changeEmploymentSemester(-1)" aria-label="上一學期"><i class="ph ph-caret-left" aria-hidden="true"></i></button>
+                <div class="semester-label"><strong>${semesterLabel(this.empAcademicYear, this.empTerm)}</strong><span>${formatRocMonth(months[0])}～${formatRocMonth(months[months.length - 1])}</span></div>
+                <button type="button" class="btn btn-secondary btn-sm semester-arrow-button" onclick="app.changeEmploymentSemester(1)" aria-label="下一學期"><i class="ph ph-caret-right" aria-hidden="true"></i></button>
+            </div>
+            ${currentControl}
         </div>`;
     },
 
@@ -454,6 +486,18 @@ export const employmentModule = {
         const next = shiftSemester(this.empAcademicYear, this.empTerm, direction);
         this.empAcademicYear = next.academicYear;
         this.empTerm = next.term;
+        this.empMonthEditor = null;
+        this.employmentPersonEditorOpen = false;
+        this.employmentPersonId = '';
+        this.employmentPersonDrafts = [];
+        this.renderEmployment();
+    },
+
+    goToCurrentEmploymentSemester: function() {
+        if (this.employmentPersonEditorOpen && !confirm('回到本學期會放棄尚未儲存的聘僱修改，確定要繼續嗎？')) return;
+        const current = currentSemester();
+        this.empAcademicYear = current.academicYear;
+        this.empTerm = current.term;
         this.empMonthEditor = null;
         this.employmentPersonEditorOpen = false;
         this.employmentPersonId = '';
@@ -530,10 +574,11 @@ export const employmentModule = {
                     .map(employment => {
                         const project = projects.find(item => item._id === employment.project_id);
                         const projectName = project?.name || '未指定計畫';
+                        const colorKey = resolveProjectColorKey(project || { _id: employment.project_id, name: projectName });
                         const averageValues = scheduleValuesInMonths(averageSchedule(employment), months);
                         const warnings = lowDeclaredMonths(employment, months);
                         return `<div class="employment-person-record">
-                            <div class="employment-person-record-title"><strong>${escapeHtml(projectName)}</strong>${employment.schema_version === 2 ? '' : '<span class="legacy-badge">舊格式</span>'}</div>
+                            <div class="employment-person-record-title project-color-${colorKey}"><span class="employment-project-swatch" aria-hidden="true"></span><strong>${escapeHtml(projectName)}</strong>${employment.schema_version === 2 ? '' : '<span class="legacy-badge">舊格式</span>'}</div>
                             ${employment.original_student_id ? `<p class="employment-record-original-id">原始申報學號：${escapeHtml(employment.original_student_id)}</p>` : ''}
                             <dl>
                                 <div><dt>申報聘僱期間</dt><dd>${formatRocMonth(employment.declared_start_month)}～${formatRocMonth(employment.declared_end_month)}</dd></div>
@@ -599,42 +644,106 @@ export const employmentModule = {
                 <div class="empty-state"><i class="ph ph-calendar-blank" aria-hidden="true"></i>這個學期沒有聘僱資料</div>`;
         }
 
-        const headers = visibleMonths.map(month => `<th scope="col">${formatRocMonth(month)}</th>`).join('');
+        const currentMonth = currentMonthKey();
+        const currentMonthIndex = visibleMonths.indexOf(currentMonth);
+        const headers = visibleMonths.map(month => `<th scope="col" class="${month === currentMonth ? 'is-current-month' : ''}">${formatRocMonth(month)}${month === currentMonth ? '<span class="current-month-label">本月</span>' : ''}</th>`).join('');
         let rows = '';
 
         [...grouped.entries()].sort(([a], [b]) => compareStudentIds(a, b)).forEach(([studentId, records]) => {
             const member = this.data.members.find(item => item.Student_ID === studentId);
             const name = member?.Name_Ch || studentId;
             const totals = Object.fromEntries(visibleMonths.map(month => [month, 0]));
-            rows += `<tr class="employment-person-row"><th colspan="${visibleMonths.length + 1}" scope="rowgroup"><span><i class="ph ph-user" aria-hidden="true"></i>${escapeHtml(name)}</span><small>${escapeHtml(studentId)}</small></th></tr>`;
+            const sortedRecords = records.sort((a, b) => {
+                const leftName = projects.find(item => item._id === a.project_id)?.name || a.project_id;
+                const rightName = projects.find(item => item._id === b.project_id)?.name || b.project_id;
+                return leftName.localeCompare(rightName, 'zh-Hant');
+            });
 
-            records.sort((a, b) => a.project_id.localeCompare(b.project_id)).forEach(employment => {
+            sortedRecords.forEach((employment, recordIndex) => {
                 const project = projects.find(item => item._id === employment.project_id);
                 const schedule = mode === 'declared' ? declaredSchedule(employment) : averageSchedule(employment);
                 const projectName = project?.name || '未指定計畫';
-                const cells = visibleMonths.map(month => {
-                    if (schedule[month] === undefined) return '<td class="employment-month-empty">—</td>';
-                    const amount = schedule[month];
-                    totals[month] += amount;
-                    if (mode === 'average') return `<td><span class="employment-month-value readonly" aria-label="${formatRocMonth(month)}平均月薪 ${amount} 元">${amount.toLocaleString('zh-TW')}</span></td>`;
+                const colorKey = resolveProjectColorKey(project || { _id: employment.project_id, name: projectName });
+                const segments = buildScheduleSegments(schedule, visibleMonths);
+                visibleMonths.forEach(month => {
+                    totals[month] += Number(schedule[month]) || 0;
+                });
 
-                    const override = employment.month_overrides[month];
-                    const adjusted = override !== undefined;
-                    const belowMinimum = amount > 0 && amount < MIN_PROJECT_MONTHLY_AMOUNT;
-                    const reason = typeof override === 'object' ? override.reason : '';
-                    const stateLabel = [adjusted ? '已調整' : '', belowMinimum ? `低於 ${MIN_PROJECT_MONTHLY_AMOUNT.toLocaleString('zh-TW')}` : ''].filter(Boolean).join('／');
-                    return `<td><button type="button" class="employment-month-value ${adjusted ? 'adjusted' : ''} ${belowMinimum ? 'below-minimum' : ''}" onclick="app.editEmploymentMonth('${employment._id}','${month}')" aria-label="編輯 ${escapeHtml(name)} ${escapeHtml(projectName)} ${formatRocMonth(month)}，目前 ${amount} 元${adjusted ? '，有單月調整' : ''}${belowMinimum ? `，低於最低聘僱金額 ${MIN_PROJECT_MONTHLY_AMOUNT} 元` : ''}" title="${belowMinimum ? `低於每計畫每月最低聘僱金額 ${formatMoney(MIN_PROJECT_MONTHLY_AMOUNT)}` : (adjusted ? `單月調整：${escapeHtml(reason || '未填原因')}` : '點擊編輯最終總額')}">${amount.toLocaleString('zh-TW')}${stateLabel ? `<span>${stateLabel}</span>` : ''}</button></td>`;
+                const activeScheduleMonths = Object.entries(schedule)
+                    .filter(([, amount]) => Number(amount) > 0)
+                    .map(([month]) => month)
+                    .sort();
+                const firstVisibleMonth = visibleMonths[0];
+                const lastVisibleMonth = visibleMonths[visibleMonths.length - 1];
+                const continuesBefore = activeScheduleMonths.some(month => month < firstVisibleMonth);
+                const continuesAfter = activeScheduleMonths.some(month => month > lastVisibleMonth);
+
+                const spans = segments.map((segment, segmentIndex) => {
+                    const values = segment.months.map(({ month, amount }) => {
+                        if (mode === 'average') {
+                            return `<span class="employment-span-value readonly"
+                                aria-label="${escapeHtml(projectName)}，${formatRocMonth(month)}平均月薪 ${amount} 元">${amount.toLocaleString('zh-TW')}</span>`;
+                        }
+
+                        const override = employment.month_overrides[month];
+                        const adjusted = override !== undefined;
+                        const belowMinimum = amount > 0 && amount < MIN_PROJECT_MONTHLY_AMOUNT;
+                        const reason = typeof override === 'object' ? override.reason : '';
+                        const stateLabel = belowMinimum ? '低於最低額' : (adjusted ? '已調整' : '');
+                        const title = belowMinimum
+                            ? `低於每計畫每月最低聘僱金額 ${formatMoney(MIN_PROJECT_MONTHLY_AMOUNT)}`
+                            : (adjusted ? `單月調整：${reason || '未填原因'}` : '點擊編輯該月最終總額');
+
+                        return `<button type="button"
+                            class="employment-span-value ${adjusted ? 'adjusted' : ''} ${belowMinimum ? 'below-minimum' : ''}"
+                            onclick="app.editEmploymentMonth('${employment._id}','${month}')"
+                            aria-label="編輯 ${escapeHtml(name)} ${escapeHtml(projectName)} ${formatRocMonth(month)}，目前 ${amount} 元${adjusted ? '，有單月調整' : ''}${belowMinimum ? `，低於最低聘僱金額 ${MIN_PROJECT_MONTHLY_AMOUNT} 元` : ''}"
+                            title="${escapeHtml(title)}">${amount.toLocaleString('zh-TW')}${stateLabel ? `<small>${stateLabel}</small>` : ''}</button>`;
+                    }).join('');
+                    const continuesLeft = segmentIndex === 0 && segment.startIndex === 0 && continuesBefore;
+                    const continuesRight = segmentIndex === segments.length - 1
+                        && segment.endIndex === visibleMonths.length - 1
+                        && continuesAfter;
+
+                    return `<div class="employment-time-span project-color-${colorKey} ${continuesLeft ? 'continues-left' : ''} ${continuesRight ? 'continues-right' : ''}"
+                        style="grid-column:${segment.startIndex + 1} / ${segment.endIndex + 2};"
+                        aria-label="${escapeHtml(projectName)}聘僱期間 ${formatRocMonth(segment.months[0].month)}至${formatRocMonth(segment.months[segment.months.length - 1].month)}">
+                        <div class="employment-time-span-values" style="grid-template-columns:repeat(${segment.months.length}, minmax(0, 1fr));">${values}</div>
+                    </div>`;
                 }).join('');
 
-                rows += `<tr><th scope="row" class="employment-project-cell"><span>${escapeHtml(projectName)}</span><small>${escapeHtml(employment.remark || '')}</small></th>${cells}</tr>`;
+                const personCell = recordIndex === 0
+                    ? `<th class="employment-person-cell" scope="rowgroup" rowspan="${sortedRecords.length}">
+                        <span class="employment-person-cell-name">${escapeHtml(name)}</span>
+                        <small>${escapeHtml(studentId)}</small>
+                        <button type="button" class="employment-person-edit-button" onclick="app.openEmploymentPersonEditor('${escapeHtml(studentId)}')">
+                            <i class="ph ph-pencil-simple" aria-hidden="true"></i>編輯
+                        </button>
+                    </th>`
+                    : '';
+
+                rows += `<tr class="employment-project-row project-color-${colorKey}">
+                    ${personCell}
+                    <th scope="row" class="employment-project-cell">
+                        <span class="employment-project-label"><span class="employment-project-swatch" aria-hidden="true"></span>${escapeHtml(projectName)}</span>
+                        ${employment.remark ? `<small>${escapeHtml(employment.remark)}</small>` : ''}
+                    </th>
+                    <td colspan="${visibleMonths.length}" class="employment-span-track-cell">
+                        <div class="employment-span-track ${currentMonthIndex >= 0 ? 'has-current-month' : ''}"
+                            style="grid-template-columns:repeat(${visibleMonths.length}, minmax(96px, 1fr));${currentMonthIndex >= 0 ? `--current-month-index:${currentMonthIndex};--visible-month-count:${visibleMonths.length};` : ''}">${spans}</div>
+                    </td>
+                </tr>`;
             });
 
-            rows += `<tr class="employment-total-row"><th scope="row">${mode === 'declared' ? '本月聘僱合計' : '本月平均月薪'}</th>${visibleMonths.map(month => `<td>${totals[month] ? totals[month].toLocaleString('zh-TW') : '—'}</td>`).join('')}</tr>`;
+            rows += `<tr class="employment-total-row">
+                <th colspan="2" scope="row">${mode === 'declared' ? '本月聘僱合計' : '本月平均月薪'}</th>
+                ${visibleMonths.map(month => `<td class="${month === currentMonth ? 'is-current-month' : ''}">${totals[month] ? totals[month].toLocaleString('zh-TW') : '—'}</td>`).join('')}
+            </tr>`;
         });
 
         return `<div class="employment-timeline-controls">${modeToggle}</div>
             <div class="employment-timeline-wrap" tabindex="0" role="region" aria-label="聘僱時程表，可左右及上下捲動"><table class="employment-timeline-table">
-                <thead><tr><th scope="col">人員／計畫</th>${headers}</tr></thead>
+                <thead><tr><th scope="col">人員</th><th scope="col">計畫</th>${headers}</tr></thead>
                 <tbody>${rows}</tbody>
             </table></div>
             ${this._renderMonthEditor()}`;
@@ -1002,7 +1111,7 @@ export const employmentModule = {
             const remaining = available === null ? null : available - semesterSpend;
             const state = project._currentState;
             return `<tr class="${state.rank === 2 ? 'is-ended' : ''}">
-                <td><strong>${escapeHtml(project.name)}</strong></td>
+                <td><span class="project-name-with-color project-color-${project.color_key}"><span class="employment-project-swatch" aria-hidden="true"></span><strong>${escapeHtml(project.name)}</strong></span></td>
                 <td><span class="project-state-badge is-${state.key}"><i class="ph ${state.icon}" aria-hidden="true"></i>${state.label}</span></td>
                 <td>${escapeHtml(project.project_number || '-')}</td>
                 <td>${escapeHtml(project.project_code || '-')}</td>
@@ -1040,9 +1149,24 @@ export const employmentModule = {
         if (!this.projectEditorOpen) return '';
         const project = this.projectEditId
             ? this._projectData().find(item => item._id === this.projectEditId)
-            : normalizeProject({ name: '', status: 'active', semester_budgets: {} });
+            : normalizeProject({
+                name: '',
+                status: 'active',
+                color_key: PROJECT_COLOR_OPTIONS[this._projectData().length % PROJECT_COLOR_OPTIONS.length].key,
+                semester_budgets: {}
+            });
         if (!project) return '';
         const budget = getSemesterBudget(project, this._semesterKey());
+        const colorOptions = PROJECT_COLOR_OPTIONS.map(option => `
+            <label class="project-color-option project-color-${option.key}">
+                <input type="radio" name="project-color-key" value="${option.key}" ${project.color_key === option.key ? 'checked' : ''}
+                    onchange="app.updateProjectColorSelection('${option.key}')">
+                <span class="project-color-swatch" aria-hidden="true"></span>
+                <span>${option.label}</span>
+                <span class="project-color-check" aria-hidden="true"><i class="ph-bold ph-check"></i></span>
+            </label>`).join('');
+        const selectedColorLabel = PROJECT_COLOR_OPTIONS.find(option => option.key === project.color_key)?.label
+            || PROJECT_COLOR_OPTIONS[0].label;
 
         return `<section id="project-inline-editor" class="inline-editor" aria-labelledby="project-editor-title">
             <div class="inline-editor-heading"><div><h3 id="project-editor-title">${this.projectEditId ? '編輯' : '新增'}計畫</h3><p>本學期業務費：${semesterLabel(this.empAcademicYear, this.empTerm)}</p></div><button type="button" class="btn btn-secondary btn-sm" onclick="app.cancelProjectEditor()">取消</button></div>
@@ -1055,10 +1179,24 @@ export const employmentModule = {
                 ${renderRocMonthField('project-start', '計畫開始月份', project.start_month, { optional: true })}
                 ${renderRocMonthField('project-end', '計畫結束月份', project.end_month, { optional: true })}
                 <div class="form-group"><label for="project-status">管理狀態</label><select id="project-status"><option value="active" ${project.status === 'active' ? 'selected' : ''}>使用中</option><option value="archived" ${project.status === 'archived' ? 'selected' : ''}>已封存</option></select><p class="form-help">進行中或已結束會依計畫期間自動判定。</p></div>
+                <fieldset class="form-group project-color-field wide">
+                    <legend>計畫顏色</legend>
+                    <div class="project-color-options">${colorOptions}</div>
+                    <div class="project-color-meta">
+                        <p class="form-help">用於甘特圖辨識；計畫名稱仍會完整顯示。</p>
+                        <p id="project-color-selection" class="project-color-selection" aria-live="polite">目前選擇：${escapeHtml(selectedColorLabel)}</p>
+                    </div>
+                </fieldset>
                 <div id="project-form-error" class="form-error wide" role="alert"></div>
             </div>
             <div class="inline-editor-actions"><button type="button" class="btn btn-primary" id="btn-save-project" onclick="app.saveProject()">儲存計畫</button></div>
         </section>`;
+    },
+
+    updateProjectColorSelection: function(colorKey) {
+        const option = PROJECT_COLOR_OPTIONS.find(item => item.key === colorKey);
+        const label = document.getElementById('project-color-selection');
+        if (label && option) label.textContent = `目前選擇：${option.label}`;
     },
 
     saveProject: async function() {
@@ -1086,6 +1224,9 @@ export const employmentModule = {
             name,
             project_number: document.getElementById('project-number').value.trim(),
             project_code: document.getElementById('project-code').value.trim(),
+            color_key: document.querySelector('input[name="project-color-key"]:checked')?.value
+                || existing?.color_key
+                || PROJECT_COLOR_OPTIONS[0].key,
             start_month: start || null,
             end_month: end || null,
             status: document.getElementById('project-status').value,
@@ -1109,73 +1250,352 @@ export const employmentModule = {
         }
     },
 
-    exportEmploymentExcel: function() {
-        const employments = this._employmentData();
-        const projects = this._projectData();
-        if (!employments.length) {
-            this.showNotification('沒有聘僱資料可匯出', 'warning');
+    exportEmploymentExcel: async function() {
+        if (typeof ExcelJS === 'undefined') {
+            this.showNotification('Excel 匯出元件尚未載入，請重新整理後再試', 'error');
             return;
         }
 
-        const summaryRows = employments.map(employment => {
-            const member = this.data.members.find(item => item.Student_ID === employment.student_id);
-            const project = projects.find(item => item._id === employment.project_id);
-            return {
-                '學號': employment.original_student_id || employment.student_id,
-                '姓名': member?.Name_Ch || '',
-                '計畫名稱': project?.name || '',
-                '計畫編號': project?.project_number || '',
-                '計畫代碼': project?.project_code || '',
-                '聘僱期間': `${formatRocMonth(employment.declared_start_month)}-${formatRocMonth(employment.declared_end_month)}`,
-                '基本月額': employment.base_monthly_amount,
-                '聘僱總額': declaredTotal(employment),
-                '平均月薪對應期間': `${formatRocMonth(employment.average_start_month)}-${formatRocMonth(employment.average_end_month)}`,
-                '平均月薪': formatAverageSummary(employment),
-                '備註': employment.remark || ''
-            };
+        const exportWindow = buildEmploymentExportWindow(this.empAcademicYear, this.empTerm);
+        const exportSemesters = exportWindow.semesters;
+        const exportMonths = exportWindow.months;
+        const employments = this._employmentData().filter(employment =>
+            rangesOverlap(employment.declared_start_month, employment.declared_end_month, exportMonths)
+            || rangesOverlap(employment.average_start_month, employment.average_end_month, exportMonths)
+        );
+        const projects = this._projectData();
+        if (!employments.length) {
+            this.showNotification('這個聘僱年度區間沒有資料可匯出', 'warning');
+            return;
+        }
+
+        const membersById = new Map();
+        (this.data.members || []).forEach(member => {
+            membersById.set(member.Student_ID, member);
+            (member.Previous_Student_IDs || []).forEach(previousId => membersById.set(previousId, member));
+        });
+        const projectById = new Map(projects.map(project => [project._id, project]));
+        const sortedEmployments = [...employments].sort((left, right) => {
+            const idDifference = compareStudentIds(left.student_id, right.student_id);
+            if (idDifference) return idDifference;
+            const leftProject = projectById.get(left.project_id)?.name || left.project_id;
+            const rightProject = projectById.get(right.project_id)?.name || right.project_id;
+            return leftProject.localeCompare(rightProject, 'zh-Hant');
         });
 
-        const monthRows = [];
-        employments.forEach(employment => {
-            const member = this.data.members.find(item => item.Student_ID === employment.student_id);
-            const project = projects.find(item => item._id === employment.project_id);
-            const declared = declaredSchedule(employment);
-            const average = averageSchedule(employment);
-            const months = [...new Set([...Object.keys(declared), ...Object.keys(average)])].sort();
-            months.forEach(month => {
-                const override = employment.month_overrides[month];
-                monthRows.push({
-                    '學號': employment.original_student_id || employment.student_id,
-                    '姓名': member?.Name_Ch || '',
-                    '計畫名稱': project?.name || '',
-                    '年月': formatRocMonth(month),
-                    '聘僱金額': declared[month] ?? '',
-                    '平均月薪': average[month] ?? '',
-                    '單月調整原因': typeof override === 'object' ? override.reason || '' : ''
+        const button = document.querySelector('[onclick="app.exportEmploymentExcel()"]');
+        const originalButtonHtml = button?.innerHTML;
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<i class="ph ph-spinner-gap" aria-hidden="true"></i> 產生中';
+        }
+
+        const solidFill = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+        const thinBorder = color => ({ style: 'thin', color: { argb: color } });
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'GOODLAB';
+        workbook.company = 'GOODLAB';
+        workbook.subject = '學生聘僱資料';
+        workbook.created = new Date();
+
+        try {
+            const summarySheet = workbook.addWorksheet('聘僱總表', {
+                views: [{
+                    state: 'frozen',
+                    xSplit: 13,
+                    ySplit: 2,
+                    topLeftCell: 'N3',
+                    activeCell: 'A3',
+                    showGridLines: false,
+                    zoomScale: 90
+                }],
+                pageSetup: {
+                    orientation: 'landscape',
+                    fitToPage: true,
+                    fitToWidth: 1,
+                    fitToHeight: 0,
+                    paperSize: 9
+                }
+            });
+
+            const detailHeaders = [
+                '姓名', '學號', '薪資備註', '聘僱計畫', '計畫編號／代碼',
+                '平均月薪', '聘僱月額', '聘僱月數', '聘僱總額',
+                '聘僱開始', '聘僱結束', '平均月薪對應期間'
+            ];
+            const timelineStartColumn = 14;
+            const lastTimelineColumn = timelineStartColumn + exportMonths.length - 1;
+            const lastSummaryRow = sortedEmployments.length + 2;
+
+            summarySheet.mergeCells(1, 1, 1, detailHeaders.length);
+            const detailTitle = summarySheet.getCell(1, 1);
+            detailTitle.value = `GOODLAB 聘僱資料｜${semesterLabel(exportSemesters[0].academicYear, exportSemesters[0].term)}～${semesterLabel(exportSemesters[1].academicYear, exportSemesters[1].term)}`;
+            detailTitle.fill = solidFill('FF315F52');
+            detailTitle.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 12 };
+            detailTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+
+            detailHeaders.forEach((header, index) => {
+                const cell = summarySheet.getCell(2, index + 1);
+                cell.value = header;
+                cell.fill = solidFill('FF315F52');
+                cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+                cell.border = {
+                    top: thinBorder('FF315F52'),
+                    bottom: thinBorder('FF315F52'),
+                    left: thinBorder('FFB9C9C3'),
+                    right: thinBorder('FFB9C9C3')
+                };
+            });
+
+            summarySheet.getColumn(13).width = 2.2;
+            for (let rowNumber = 1; rowNumber <= lastSummaryRow; rowNumber += 1) {
+                summarySheet.getCell(rowNumber, 13).fill = solidFill('FF172033');
+            }
+
+            exportSemesters.forEach((semester, semesterIndex) => {
+                const startColumn = timelineStartColumn + semesterIndex * 6;
+                const endColumn = startColumn + 5;
+                summarySheet.mergeCells(1, startColumn, 1, endColumn);
+                const semesterCell = summarySheet.getCell(1, startColumn);
+                semesterCell.value = semesterLabel(semester.academicYear, semester.term);
+                semesterCell.fill = solidFill(semesterIndex === 0 ? 'FFF8E7C4' : 'FFDCEAF7');
+                semesterCell.font = { bold: true, color: { argb: 'FF172033' } };
+                semesterCell.alignment = { horizontal: 'center', vertical: 'middle' };
+                semesterCell.border = {
+                    top: { style: 'medium', color: { argb: 'FF172033' } },
+                    bottom: { style: 'medium', color: { argb: 'FF172033' } },
+                    left: { style: 'medium', color: { argb: 'FF172033' } },
+                    right: { style: 'medium', color: { argb: 'FF172033' } }
+                };
+            });
+
+            exportMonths.forEach((month, monthIndex) => {
+                const cell = summarySheet.getCell(2, timelineStartColumn + monthIndex);
+                cell.value = formatRocMonth(month);
+                cell.fill = solidFill(monthIndex < 6 ? 'FFFFF8E8' : 'FFEEF6FC');
+                cell.font = { bold: true, color: { argb: 'FF334155' } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                cell.border = {
+                    top: thinBorder('FF64748B'),
+                    bottom: thinBorder('FF64748B'),
+                    left: thinBorder('FF94A3B8'),
+                    right: thinBorder('FF94A3B8')
+                };
+            });
+
+            let lastPersonId = '';
+            let personBand = false;
+            sortedEmployments.forEach((employment, rowIndex) => {
+                const rowNumber = rowIndex + 3;
+                const member = membersById.get(employment.student_id);
+                const project = projectById.get(employment.project_id);
+                const declared = declaredSchedule(employment);
+                const average = averageSchedule(employment);
+                const averageAmounts = Object.values(average).filter(amount => amount > 0);
+                const distinctAverageAmounts = [...new Set(averageAmounts)];
+                const averageMonthly = distinctAverageAmounts.length === 1
+                    ? distinctAverageAmounts[0]
+                    : (averageAmounts.length
+                        ? `${Math.min(...averageAmounts).toLocaleString('zh-TW')}～${Math.max(...averageAmounts).toLocaleString('zh-TW')}`
+                        : '');
+                const projectColorKey = resolveProjectColorKey(project || {
+                    _id: employment.project_id,
+                    name: project?.name || employment.project_id
+                });
+                const projectColors = EMPLOYMENT_EXCEL_PROJECT_COLORS[projectColorKey] || EMPLOYMENT_EXCEL_PROJECT_COLORS.slate;
+                const currentPersonId = employment.student_id;
+                if (currentPersonId !== lastPersonId) {
+                    personBand = !personBand;
+                    lastPersonId = currentPersonId;
+                }
+                const rowFill = personBand ? 'FFF8FAFC' : 'FFFFFFFF';
+                const projectIdentity = [project?.project_number, project?.project_code].filter(Boolean).join('／');
+                const detailValues = [
+                    member?.Name_Ch || currentPersonId,
+                    currentPersonId,
+                    employment.remark || '',
+                    project?.name || '未指定計畫',
+                    projectIdentity,
+                    averageMonthly,
+                    employment.base_monthly_amount,
+                    Object.values(declared).filter(amount => amount > 0).length,
+                    declaredTotal(employment),
+                    formatRocMonth(employment.declared_start_month),
+                    formatRocMonth(employment.declared_end_month),
+                    `${formatRocMonth(employment.average_start_month)}～${formatRocMonth(employment.average_end_month)}`
+                ];
+
+                detailValues.forEach((value, columnIndex) => {
+                    const cell = summarySheet.getCell(rowNumber, columnIndex + 1);
+                    cell.value = value;
+                    cell.fill = solidFill(rowFill);
+                    cell.font = { color: { argb: 'FF172033' } };
+                    cell.alignment = {
+                        horizontal: [6, 7, 8, 9].includes(columnIndex + 1) ? 'right' : 'left',
+                        vertical: 'middle',
+                        wrapText: [3, 4, 5, 12].includes(columnIndex + 1)
+                    };
+                    cell.border = {
+                        bottom: thinBorder('FFE2E8F0'),
+                        right: thinBorder('FFF1F5F9')
+                    };
+                });
+
+                summarySheet.getCell(rowNumber, 4).border = {
+                    left: { style: 'medium', color: { argb: projectColors.border } },
+                    bottom: thinBorder('FFE2E8F0'),
+                    right: thinBorder('FFF1F5F9')
+                };
+                [6, 7, 9].forEach(columnNumber => {
+                    if (typeof summarySheet.getCell(rowNumber, columnNumber).value === 'number') {
+                        summarySheet.getCell(rowNumber, columnNumber).numFmt = '"NT$"#,##0';
+                    }
+                });
+                summarySheet.getCell(rowNumber, 8).numFmt = '#,##0';
+
+                exportMonths.forEach((month, monthIndex) => {
+                    const cell = summarySheet.getCell(rowNumber, timelineStartColumn + monthIndex);
+                    const isActive = Number(declared[month]) > 0;
+                    const previousActive = monthIndex > 0 && Number(declared[exportMonths[monthIndex - 1]]) > 0;
+                    const nextActive = monthIndex < exportMonths.length - 1 && Number(declared[exportMonths[monthIndex + 1]]) > 0;
+                    cell.value = isActive ? '✓' : '';
+                    cell.fill = solidFill(isActive ? projectColors.fill : rowFill);
+                    cell.font = {
+                        bold: isActive,
+                        color: { argb: isActive ? projectColors.text : 'FF172033' }
+                    };
+                    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                    cell.border = isActive
+                        ? {
+                            top: thinBorder(projectColors.border),
+                            bottom: thinBorder(projectColors.border),
+                            left: previousActive ? thinBorder(projectColors.fill) : { style: 'medium', color: { argb: projectColors.border } },
+                            right: nextActive ? thinBorder(projectColors.fill) : { style: 'medium', color: { argb: projectColors.border } }
+                        }
+                        : {
+                            top: thinBorder('FFE2E8F0'),
+                            bottom: thinBorder('FFE2E8F0'),
+                            left: thinBorder('FFE2E8F0'),
+                            right: thinBorder('FFE2E8F0')
+                        };
+                });
+                summarySheet.getRow(rowNumber).height = 24;
+            });
+
+            const widths = [12, 14, 28, 24, 18, 15, 14, 11, 15, 12, 12, 22];
+            widths.forEach((width, index) => { summarySheet.getColumn(index + 1).width = width; });
+            for (let column = timelineStartColumn; column <= lastTimelineColumn; column += 1) {
+                summarySheet.getColumn(column).width = 11.5;
+            }
+            summarySheet.getRow(1).height = 24;
+            summarySheet.getRow(2).height = 30;
+            summarySheet.autoFilter = { from: 'A2', to: `L${lastSummaryRow}` };
+            summarySheet.pageSetup.printTitlesRow = '1:2';
+            summarySheet.pageSetup.printArea = `A1:${summarySheet.getColumn(lastTimelineColumn).letter}${lastSummaryRow}`;
+
+            const addDataSheet = (name, headers, rows, columnWidths, currencyColumns = []) => {
+                const sheet = workbook.addWorksheet(name, {
+                    views: [{ state: 'frozen', ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', showGridLines: false }]
+                });
+                sheet.addRow(headers);
+                rows.forEach(values => sheet.addRow(values));
+                const headerRow = sheet.getRow(1);
+                headerRow.height = 28;
+                headerRow.eachCell(cell => {
+                    cell.fill = solidFill('FF315F52');
+                    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                });
+                rows.forEach((values, rowIndex) => {
+                    const row = sheet.getRow(rowIndex + 2);
+                    row.height = 22;
+                    row.eachCell(cell => {
+                        cell.fill = solidFill(rowIndex % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC');
+                        cell.border = { bottom: thinBorder('FFE2E8F0') };
+                        cell.alignment = { vertical: 'middle', wrapText: true };
+                    });
+                });
+                columnWidths.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
+                currencyColumns.forEach(columnNumber => {
+                    sheet.getColumn(columnNumber).numFmt = '"NT$"#,##0';
+                });
+                sheet.autoFilter = { from: 'A1', to: `${sheet.getColumn(headers.length).letter}${rows.length + 1}` };
+                return sheet;
+            };
+
+            const monthRows = [];
+            sortedEmployments.forEach(employment => {
+                const member = membersById.get(employment.student_id);
+                const project = projectById.get(employment.project_id);
+                const declared = declaredSchedule(employment);
+                const average = averageSchedule(employment);
+                exportMonths.forEach(month => {
+                    if (declared[month] === undefined && average[month] === undefined) return;
+                    const override = employment.month_overrides[month];
+                    monthRows.push([
+                        member?.Name_Ch || employment.student_id,
+                        employment.student_id,
+                        project?.name || '未指定計畫',
+                        formatRocMonth(month),
+                        declared[month] ?? '',
+                        average[month] ?? '',
+                        typeof override === 'object' ? override.reason || '' : ''
+                    ]);
                 });
             });
-        });
+            addDataSheet(
+                '月份明細',
+                ['姓名', '學號', '計畫名稱', '年月', '聘僱金額', '平均月薪', '單月調整原因'],
+                monthRows,
+                [12, 14, 24, 10, 14, 14, 30],
+                [5, 6]
+            );
 
-        const projectRows = projects.map(project => {
-            const available = getSemesterBudget(project, this._semesterKey());
-            const spend = this._projectSpend(project._id, this._semesterMonths());
-            return {
-                '計畫名稱': project.name,
-                '目前狀況': projectCurrentState(project).label,
-                '計畫編號': project.project_number,
-                '計畫代碼': project.project_code,
-                '學期': semesterLabel(this.empAcademicYear, this.empTerm),
-                '規劃前可用業務費': available ?? '',
-                '本學期聘僱支出': spend,
-                '預計剩餘': available === null ? '' : available - spend
-            };
-        });
+            const projectRows = projects.map(project => {
+                const available = getSemesterBudget(project, this._semesterKey());
+                const spend = this._projectSpend(project._id, this._semesterMonths());
+                return [
+                    project.name,
+                    projectCurrentState(project).label,
+                    project.project_number,
+                    project.project_code,
+                    semesterLabel(this.empAcademicYear, this.empTerm),
+                    available ?? '',
+                    spend,
+                    available === null ? '' : available - spend
+                ];
+            });
+            addDataSheet(
+                '計畫業務費',
+                ['計畫名稱', '目前狀況', '計畫編號', '計畫代碼', '學期', '規劃前可用業務費', '本學期聘僱支出', '預計剩餘'],
+                projectRows,
+                [24, 12, 18, 18, 20, 20, 18, 16],
+                [6, 7, 8]
+            );
 
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), '聘僱總表');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(monthRows), '月份明細');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(projectRows), '計畫業務費');
-        XLSX.writeFile(workbook, `GOODLAB_聘僱_${this._semesterKey()}_${new Date().toISOString().split('T')[0]}.xlsx`);
-        this.showNotification('Excel 已匯出', 'success');
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], {
+                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            const dateText = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date());
+            link.href = url;
+            link.download = `GOODLAB_聘僱_${this._semesterKey()}_${dateText}.xlsx`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            this.showNotification('Excel 已匯出', 'success');
+        } catch (error) {
+            console.error('匯出聘僱 Excel 失敗', error);
+            this.showNotification(`Excel 匯出失敗：${error.message}`, 'error');
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalButtonHtml;
+            }
+        }
     }
 };

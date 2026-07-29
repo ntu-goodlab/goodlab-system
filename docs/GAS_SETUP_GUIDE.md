@@ -82,6 +82,8 @@ Apps Script「專案設定」→「指令碼屬性」新增：
 
 如要查看每週報表中的維修摘要，可執行 `testMaintenanceSummaryToMe`。它會使用目前儀器名稱與維修狀態產生預覽，並只寄到 `f10943138@ntu.edu.tw`。
 
+如要查看完整的 Admin 每週報表，可執行 `testWeeklyAdminReportToMe`。它會包含值日生、實驗室行事、維修紀錄，以及公積金本週新增、完成還款方式、戶頭／現金餘額與待還款摘要；預覽只會寄到 `f10943138@ntu.edu.tw`。
+
 ## 7. 安裝正式排程
 
 測試成功後，手動執行一次 `installTriggers`。它會先移除本專案既有的同名觸發器，再建立：
@@ -102,7 +104,8 @@ Apps Script 的每週觸發器會在指定小時內選擇一個時間執行，�
 2. `testDutyReminderToMe`
 3. `testDutyCompletionToMe`
 4. `testMaintenanceSummaryToMe`
-5. `showAutomationStatus`
+5. `testWeeklyAdminReportToMe`
+6. `showAutomationStatus`
 
 `checkDutyReminder` 會寄給尚未提交的當週值日生（含上週未完成的順延者），`checkDutyCompletionNotification` 會把尚未通知的完成摘要寄給全體在學成員，`checkWeeklyAdminReport` 會寄給所有 Active Admin，並標示上週是否已順延；只有在確認要送出正式信件時才手動執行，否則交由排程首次觸發。
 

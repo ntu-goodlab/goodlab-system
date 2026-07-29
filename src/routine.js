@@ -39,6 +39,13 @@ function normalizeRoutineCategory(value) {
     return '例行工作';
 }
 
+function routineCategoryClass(value) {
+    const category = normalizeRoutineCategory(value);
+    if (category === '活動') return 'is-activity';
+    if (category === '行政') return 'is-admin';
+    return 'is-routine';
+}
+
 function isCompletedOneTime(routine) {
     return getRoutineScheduleType(routine) === 'one_time' && Boolean(routine.completed);
 }
@@ -112,28 +119,73 @@ export const routineModule = {
     },
 
     _renderRoutineOverview: function(container) {
-        const routines = this._getFilteredRoutines();
+        const routines = [...this._getFilteredRoutines()].sort(sortRoutineItems);
         const today = toLocalDateString(new Date());
-        const grouped = {};
-        ROUTINE_CATEGORIES.forEach(category => { grouped[category] = []; });
-        routines.forEach(routine => grouped[normalizeRoutineCategory(routine.category)].push(routine));
+        const rows = routines.map(routine => {
+            const category = normalizeRoutineCategory(routine.category);
+            const completed = isCompletedOneTime(routine);
+            const dueDate = parseLocalDate(routine.next_due);
+            const todayDate = parseLocalDate(today);
+            const daysUntil = dueDate ? Math.round((dueDate - todayDate) / 86400000) : null;
+            const warnDays = Array.isArray(routine.remind_days) ? routine.remind_days : [7, 3, 0];
+            const warningThreshold = Math.max(...warnDays, 0);
+            let statusClass = 'routine-status-ok';
+            let statusIcon = 'ph-check-circle';
+            let statusText = '正常';
 
-        let html = `
+            if (completed) {
+                statusClass = 'routine-status-completed';
+                statusText = '已完成';
+            } else if (daysUntil !== null && daysUntil < 0) {
+                statusClass = 'routine-status-overdue';
+                statusIcon = 'ph-warning-circle';
+                statusText = `逾期 ${Math.abs(daysUntil)} 天`;
+            } else if (daysUntil === 0) {
+                statusClass = 'routine-status-warn';
+                statusIcon = 'ph-clock';
+                statusText = '今天到期';
+            } else if (daysUntil !== null && daysUntil <= warningThreshold) {
+                statusClass = 'routine-status-warn';
+                statusIcon = 'ph-clock';
+                statusText = `${daysUntil} 天後`;
+            } else if (daysUntil === null) {
+                statusClass = 'routine-status-muted';
+                statusIcon = 'ph-minus-circle';
+                statusText = '未設定日期';
+            }
+
+            const safeName = escapeHtml(routine.name);
+            const safeUrl = /^https?:\/\//i.test(routine.url || '') ? escapeHtml(routine.url) : '';
+            const nameHtml = safeUrl
+                ? `<a class="routine-name-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeName}<i class="ph ph-arrow-square-out" aria-hidden="true"></i></a>`
+                : this._linkifyText(safeName);
+
+            return `<tr${completed ? ' class="routine-row-completed"' : ''}>
+                <td class="routine-complete-column">
+                    <input type="checkbox" aria-label="${completed ? `${safeName} 已完成` : `將 ${safeName} 標記為今天完成`}"
+                        ${completed ? 'checked disabled' : `onchange="app.completeRoutine('${routine._id}')"`}>
+                </td>
+                <td class="routine-item-cell">
+                    <span class="routine-category-label ${routineCategoryClass(category)}">${escapeHtml(category)}</span>
+                    <span class="routine-overview-item-name">${nameHtml}</span>
+                    ${routine.notes ? `<div class="routine-notes">${this._linkifyText(escapeHtml(routine.notes))}</div>` : ''}
+                </td>
+                <td class="routine-cycle-cell">${this.getRoutineIntervalLabel(routine)}</td>
+                <td class="date-cell">${routine.last_done || '-'}</td>
+                <td class="date-cell">${routine.next_due || '-'}</td>
+                <td class="routine-status-cell"><span class="${statusClass}"><i class="ph ${statusIcon}" aria-hidden="true"></i> ${statusText}</span></td>
+            </tr>`;
+        }).join('');
+
+        container.innerHTML = `
             <div class="section-toolbar">
                 <h2>實驗室行事</h2>
                 <button class="btn btn-primary btn-sm" onclick="app.routineView='edit'; app.renderRoutine();">
                     <i class="ph ph-pencil-simple" aria-hidden="true"></i> 編輯行事
                 </button>
             </div>
-            ${this._renderRoutineFilters()}`;
-
-        ROUTINE_CATEGORIES.forEach(category => {
-            const items = grouped[category];
-            if (!items.length) return;
-            items.sort(sortRoutineItems);
-            html += `<section class="duty-card routine-group" aria-labelledby="routine-category-${escapeHtml(category)}">
-                <div class="duty-card-header"><h3 id="routine-category-${escapeHtml(category)}">${escapeHtml(category)}</h3></div>
-                <div class="table-container"><table class="routine-table routine-overview-table">
+            ${this._renderRoutineFilters()}
+            ${routines.length ? `<div class="table-container"><table class="routine-table routine-overview-table">
                     <colgroup>
                         <col class="routine-col-complete">
                         <col class="routine-col-item">
@@ -149,66 +201,9 @@ export const routineModule = {
                         <th>上次完成</th>
                         <th>下次日期</th>
                         <th>狀態</th>
-                    </tr></thead><tbody>`;
-
-            items.forEach(routine => {
-                const completed = isCompletedOneTime(routine);
-                const dueDate = parseLocalDate(routine.next_due);
-                const todayDate = parseLocalDate(today);
-                const daysUntil = dueDate ? Math.round((dueDate - todayDate) / 86400000) : null;
-                const warnDays = Array.isArray(routine.remind_days) ? routine.remind_days : [7, 3, 0];
-                const warningThreshold = Math.max(...warnDays, 0);
-                let statusClass = 'routine-status-ok';
-                let statusIcon = 'ph-check-circle';
-                let statusText = '正常';
-
-                if (completed) {
-                    statusClass = 'routine-status-completed';
-                    statusText = '已完成';
-                } else if (daysUntil !== null && daysUntil < 0) {
-                    statusClass = 'routine-status-overdue';
-                    statusIcon = 'ph-warning-circle';
-                    statusText = `逾期 ${Math.abs(daysUntil)} 天`;
-                } else if (daysUntil === 0) {
-                    statusClass = 'routine-status-warn';
-                    statusIcon = 'ph-clock';
-                    statusText = '今天到期';
-                } else if (daysUntil !== null && daysUntil <= warningThreshold) {
-                    statusClass = 'routine-status-warn';
-                    statusIcon = 'ph-clock';
-                    statusText = `${daysUntil} 天後`;
-                } else if (daysUntil === null) {
-                    statusClass = 'routine-status-muted';
-                    statusIcon = 'ph-minus-circle';
-                    statusText = '未設定日期';
-                }
-
-                const safeName = escapeHtml(routine.name);
-                const safeUrl = /^https?:\/\//i.test(routine.url || '') ? escapeHtml(routine.url) : '';
-                const nameHtml = safeUrl
-                    ? `<a class="routine-name-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeName}<i class="ph ph-arrow-square-out" aria-hidden="true"></i></a>`
-                    : this._linkifyText(safeName);
-
-                html += `<tr${completed ? ' class="routine-row-completed"' : ''}>
-                    <td class="routine-complete-column">
-                        <input type="checkbox" aria-label="${completed ? `${safeName} 已完成` : `將 ${safeName} 標記為今天完成`}"
-                            ${completed ? 'checked disabled' : `onchange="app.completeRoutine('${routine._id}')"`}>
-                    </td>
-                    <td class="routine-item-cell">${nameHtml}${routine.notes ? `<div class="routine-notes">${this._linkifyText(escapeHtml(routine.notes))}</div>` : ''}</td>
-                    <td class="routine-cycle-cell">${this.getRoutineIntervalLabel(routine)}</td>
-                    <td class="date-cell">${routine.last_done || '-'}</td>
-                    <td class="date-cell">${routine.next_due || '-'}</td>
-                    <td class="routine-status-cell"><span class="${statusClass}"><i class="ph ${statusIcon}" aria-hidden="true"></i> ${statusText}</span></td>
-                </tr>`;
-            });
-
-            html += '</tbody></table></div></section>';
-        });
-
-        if (!routines.length) {
-            html += '<div class="empty-state"><i class="ph ph-calendar-blank" aria-hidden="true"></i>此分類目前沒有行事項目</div>';
-        }
-        container.innerHTML = html;
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table></div>` : '<div class="empty-state"><i class="ph ph-calendar-blank" aria-hidden="true"></i>此分類目前沒有行事項目</div>'}`;
     },
 
     _renderRoutineEdit: function(container) {
@@ -219,7 +214,7 @@ export const routineModule = {
                 const completed = isCompletedOneTime(routine);
                 return `<tr${completed ? ' class="routine-row-completed"' : ''}>
                     <td class="routine-item-cell">
-                        <span class="routine-category-label">${escapeHtml(category)}</span>
+                        <span class="routine-category-label ${routineCategoryClass(category)}">${escapeHtml(category)}</span>
                         <span class="routine-edit-item-name">${escapeHtml(routine.name)}</span>
                     </td>
                     <td>${routine.visible_to_users ? '<span class="status-badge status-badge-success"><i class="ph ph-eye" aria-hidden="true"></i> 顯示</span>' : '<span class="status-badge"><i class="ph ph-eye-slash" aria-hidden="true"></i> 不顯示</span>'}</td>

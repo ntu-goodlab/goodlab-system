@@ -5,6 +5,11 @@
 import { db, doc, setDoc } from './firebase.js';
 import { generateId, formatDateForInput, getMemberName } from './utils.js';
 import { showNotification, closeModal, fillPayerSelect } from './ui.js';
+import {
+    calculateAccountingSummary,
+    getPaybackMethod,
+    normalizeAccountingSource
+} from './accounting-calculations.js';
 
 function cleanAccountingDescription(value) {
     return String(value || '').replace(/^(?:🏧|💰)\s*/u, '');
@@ -13,44 +18,7 @@ function cleanAccountingDescription(value) {
 export const accountingModule = {
 
     getAccountingSummary: function() {
-        let bankBalance = 0;
-        let cashBalance = 0;
-        let payable = 0;
-        let receivable = 0;
-
-        this.data.accounting.forEach(acc => {
-            const amt = Math.abs(parseFloat(acc.Amount) || 0);
-            const type = acc.Type;
-            const source = acc.Fund_Source || 'Bank';
-            const isFund = acc.Payer === 'Fund';
-            const isRecharged = Boolean(acc.Recharge_Date);
-            const isPaidBack = Boolean(acc.Payback_Date);
-
-            if (!isFund && !isPaidBack && (type === 'School' || type === 'Lab')) payable += amt;
-            if (type === 'School' && !isRecharged) receivable += amt;
-
-            if (type === 'Income' || type === 'Deposit') {
-                if (source === 'Cash') cashBalance += amt;
-                else bankBalance += amt;
-            } else if (type === 'Withdraw' || type === 'Withdrawal') {
-                bankBalance -= amt;
-                cashBalance += amt;
-            } else if (type === 'School' || type === 'Lab') {
-                if (isFund || (!isFund && isPaidBack)) {
-                    if (source === 'Cash') cashBalance -= amt;
-                    else bankBalance -= amt;
-                }
-                if (type === 'School' && isRecharged) bankBalance += amt;
-            }
-        });
-
-        return {
-            bankBalance,
-            cashBalance,
-            totalBalance: bankBalance + cashBalance,
-            payable,
-            receivable
-        };
+        return calculateAccountingSummary(this.data.accounting);
     },
 
     getDebtSummary: function() {
@@ -165,7 +133,12 @@ export const accountingModule = {
             else if (acc.Type === 'School' && !acc.Recharge_Date) statusIcon = '<i class="ph-fill ph-circle" style="color: var(--warning); font-size:1.2rem;"></i>';
             
             const dateRecharge = acc.Recharge_Date ? formatDateForInput(acc.Recharge_Date) : `<span class="date-empty">等待</span>`;
-            const datePayback = isFund ? `<span class="date-empty">-</span>` : (acc.Payback_Date ? formatDateForInput(acc.Payback_Date) : `<span style="color:#dc3545">未還款</span>`);
+            const paybackMethodLabel = getPaybackMethod(acc) === 'Cash' ? '現金' : '戶頭';
+            const datePayback = isFund
+                ? `<span class="date-empty">-</span>`
+                : (acc.Payback_Date
+                    ? `<span class="accounting-payback-display">${formatDateForInput(acc.Payback_Date)}<small>${paybackMethodLabel}</small></span>`
+                    : `<span style="color:#dc3545">未還款</span>`);
             const showRecharge = (acc.Type !== 'School') ? '<span class="date-empty">-</span>' : dateRecharge;
 
             return `
@@ -219,6 +192,10 @@ export const accountingModule = {
             document.getElementById('Acc_Payer').value = acc.Payer;
             document.getElementById('Recharge_Date').value = formatDateForInput(acc.Recharge_Date);
             document.getElementById('Payback_Date').value = formatDateForInput(acc.Payback_Date);
+            document.getElementById('Invoice_Link').value = acc.Invoice_Link || '';
+            document.getElementById('Acc_Remark').value = acc.Remark || '';
+            this.setFundSource(normalizeAccountingSource(acc.Fund_Source));
+            this.setPaybackMethod(getPaybackMethod(acc));
         } else {
             document.getElementById('a-modal-title').innerText = "新增帳務";
             if (btnDel) btnDel.classList.add('hidden');
@@ -227,6 +204,8 @@ export const accountingModule = {
             document.getElementById('Acc_Date').value = formatDateForInput(new Date());
             document.getElementById('Acc_Type').value = 'School';
             document.getElementById('Acc_Payer').value = 'Fund';
+            this.setFundSource('Bank');
+            this.setPaybackMethod('Bank');
         }
         
         this.handleAccTypeChange();
@@ -247,6 +226,21 @@ export const accountingModule = {
         if (btnCash) {
             if(source === 'Cash') btnCash.classList.add('active-success'); else btnCash.classList.remove('active-success');
         }
+        btnBank?.setAttribute('aria-pressed', String(source === 'Bank'));
+        btnCash?.setAttribute('aria-pressed', String(source === 'Cash'));
+    },
+
+    setPaybackMethod: function(method) {
+        const normalized = normalizeAccountingSource(method);
+        const input = document.getElementById('Payback_Method');
+        if (input) input.value = normalized;
+
+        const bankButton = document.getElementById('btn-pm-bank');
+        const cashButton = document.getElementById('btn-pm-cash');
+        bankButton?.classList.toggle('active', normalized === 'Bank');
+        cashButton?.classList.toggle('active-success', normalized === 'Cash');
+        bankButton?.setAttribute('aria-pressed', String(normalized === 'Bank'));
+        cashButton?.setAttribute('aria-pressed', String(normalized === 'Cash'));
     },
 
     // === UI 連動：類型改變時 ===
@@ -295,7 +289,7 @@ export const accountingModule = {
         if (payer === 'Fund' || type === 'Income' || type === 'Withdraw') {
             divPayback.style.display = 'none';
         } else {
-            divPayback.style.display = 'flex';
+            divPayback.style.display = 'grid';
         }
 
         // 資金來源 (戶頭/現金) 顯示邏輯：
@@ -324,6 +318,7 @@ export const accountingModule = {
         }
 
         const fundSourceVal = document.getElementById('Fund_Source').value || 'Bank';
+        const paybackMethodVal = document.getElementById('Payback_Method').value || 'Bank';
         
         // ★ 強制防呆：如果是匯入或提款，直接從後端將代墊人鎖定為公積金 (Fund)
         let finalPayer = document.getElementById('Acc_Payer').value;
@@ -344,6 +339,7 @@ export const accountingModule = {
             Payer: finalPayer,
             Recharge_Date: document.getElementById('Recharge_Date').value,
             Payback_Date: document.getElementById('Payback_Date').value,
+            Payback_Method: paybackMethodVal,
             Invoice_Link: document.getElementById('Invoice_Link').value,
             Remark: document.getElementById('Acc_Remark').value,
             Fund_Source: fundSourceVal,

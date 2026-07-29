@@ -13,6 +13,63 @@ import {
     validateMemberIdMigration
 } from './member-id-migration.js';
 
+const MEMBER_GROUPS = [
+    { key: 'phd', label: '博士班', className: 'is-phd' },
+    { key: 'master', label: '碩士班', className: 'is-master' },
+    { key: 'other', label: '其他在學成員', className: 'is-other' },
+    { key: 'alumni', label: '已畢業／離校', className: 'is-alumni' }
+];
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    })[character]);
+}
+
+function memberGroupKey(member) {
+    if (member.Status === 'Alumni') return 'alumni';
+    if (member.Degree === 'PhD') return 'phd';
+    if (member.Degree === 'Master') return 'master';
+    return 'other';
+}
+
+function memberDegreeLabel(member) {
+    if (member.Degree === 'PhD') return '博士班';
+    if (member.Degree === 'Master') return '碩士班';
+    if (member.Degree === 'Bachelor') return '大學生';
+    return member.Degree || '未設定學位';
+}
+
+function studentIdSortParts(value) {
+    const normalized = String(value || '').trim().toUpperCase();
+    const match = /^([A-Z]+)(\d{2,3})/.exec(normalized);
+    const rawYear = match?.[2] || '';
+    const parsedYear = Number(rawYear);
+    return {
+        normalized,
+        admissionYear: Number.isFinite(parsedYear)
+            ? (rawYear.length === 2 ? parsedYear + 100 : parsedYear)
+            : Number.POSITIVE_INFINITY
+    };
+}
+
+function compareMembersForDirectory(a, b) {
+    const groupRank = Object.fromEntries(MEMBER_GROUPS.map((group, index) => [group.key, index]));
+    const groupDifference = groupRank[memberGroupKey(a)] - groupRank[memberGroupKey(b)];
+    if (groupDifference) return groupDifference;
+
+    if (memberGroupKey(a) === 'alumni') {
+        const alumniDegreeRank = { PhD: 0, Master: 1, Bachelor: 2 };
+        const degreeDifference = (alumniDegreeRank[a.Degree] ?? 3) - (alumniDegreeRank[b.Degree] ?? 3);
+        if (degreeDifference) return degreeDifference;
+    }
+
+    const left = studentIdSortParts(a.Student_ID);
+    const right = studentIdSortParts(b.Student_ID);
+    return left.admissionYear - right.admissionYear
+        || left.normalized.localeCompare(right.normalized, 'en', { numeric: true, sensitivity: 'base' });
+}
+
 const MEMBER_MIGRATION_WRITE_LIMIT = 450;
 const MEMBER_MIGRATION_REQUIRED_DATA = [
     { key: 'members', label: '人員' },
@@ -44,40 +101,81 @@ export const membersModule = {
 
     // === 人員列表渲染 ===
     renderMembers: function() {
-        const tbody = document.getElementById('member-tbody');
-        if (!tbody) return;
+        const container = document.getElementById('member-list');
+        if (!container) return;
         const searchEl = document.getElementById('search-member');
-        const term = searchEl ? searchEl.value.toLowerCase() : '';
+        const term = searchEl ? searchEl.value.trim().toLowerCase() : '';
         const isAdmin = this.currentRole === 'Admin';
         
-        let filtered = this.data.members.filter(m => (m.Name_Ch + m.Name_En + m.Student_ID).toLowerCase().includes(term));
-        filtered.sort((a, b) => {
-            if (a.Status !== b.Status) return a.Status === 'Active' ? -1 : 1;
-            return a.Student_ID.localeCompare(b.Student_ID);
-        });
+        const filtered = this.data.members
+            .filter(member => {
+                const previousIds = Array.isArray(member.Previous_Student_IDs) ? member.Previous_Student_IDs : [];
+                const searchable = [
+                    member.Name_Ch,
+                    member.Name_En,
+                    member.Student_ID,
+                    member.Department,
+                    ...previousIds
+                ].filter(Boolean).join(' ').toLowerCase();
+                return searchable.includes(term);
+            })
+            .sort(compareMembersForDirectory);
 
-        if (filtered.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="empty">查無資料</td></tr>'; return; }
+        if (!filtered.length) {
+            container.innerHTML = '<div class="empty-state"><i class="ph ph-users" aria-hidden="true"></i>查無符合的人員</div>';
+            return;
+        }
 
-        tbody.innerHTML = filtered.map(m => {
-            const isAlumni = m.Status === 'Alumni';
-            const degreeShort = m.Degree === "PhD" ? "博" : (m.Degree === "Master" ? "碩" : "大");
-            const previousIds = Array.isArray(m.Previous_Student_IDs) ? m.Previous_Student_IDs.filter(Boolean) : [];
-            const statusDisplay = isAlumni
-                ? '<span class="member-status is-alumni"><i class="ph ph-graduation-cap" aria-hidden="true"></i>已畢</span>'
-                : this.calculateGrade(m.Enrollment_Date, m.Degree);
-            const adminBadge = m.Role === 'Admin' ? `<span class="role-badge Admin">Admin</span>` : '';
+        container.innerHTML = MEMBER_GROUPS.map(group => {
+            const members = filtered.filter(member => memberGroupKey(member) === group.key);
+            if (!members.length) return '';
 
-            return `
-            <tr ${isAdmin ? `onclick="app.openMemberModal('${m.Student_ID}')" style="cursor:pointer;"` : ''}>
-                <td style="width:80px; text-align:center;">${statusDisplay}</td>
-                <td><strong>${m.Name_Ch}</strong> <br><small style="color:var(--secondary);" class="hide-mobile">${m.Name_En || ''}</small></td>
-                <td class="hide-mobile">${m.Student_ID}${previousIds.length ? `<small class="member-previous-id">曾用：${previousIds.join('、')}</small>` : ''}</td>
-                <td class="hide-mobile">${m.Department}</td>
-                <td>${adminBadge}</td>
-                <td style="text-align:center;">
-                    <button class="btn btn-sm btn-secondary" ${isAdmin?'':'disabled'}><i class="ph ph-pencil-simple"></i></button>
-                </td>
-            </tr>`;
+            const cards = members.map(member => {
+                const isAlumni = member.Status === 'Alumni';
+                const previousIds = Array.isArray(member.Previous_Student_IDs)
+                    ? member.Previous_Student_IDs.filter(Boolean)
+                    : [];
+                const grade = isAlumni
+                    ? '已畢業'
+                    : calculateGrade(member.Enrollment_Date, member.Degree);
+                const adminBadge = member.Role === 'Admin'
+                    ? '<span class="role-badge Admin">Admin</span>'
+                    : '';
+                const degreeLabel = memberDegreeLabel(member);
+                const cardLabel = `${member.Name_Ch || member.Student_ID}，${degreeLabel}，${grade}`;
+                const showDegreeBadge = group.key === 'alumni' || group.key === 'other';
+
+                return `<article class="member-directory-card ${group.className}">
+                    <button type="button" class="member-directory-card-button"
+                        ${isAdmin ? `onclick="app.openMemberModal('${escapeHtml(member.Student_ID)}')"` : 'disabled'}
+                        aria-label="${escapeHtml(cardLabel)}${isAdmin ? '，點擊編輯' : ''}">
+                        <span class="member-card-topline">
+                            ${showDegreeBadge ? `<span class="member-degree-badge ${group.className}">${escapeHtml(degreeLabel)}</span>` : ''}
+                            <span class="member-card-status ${isAlumni ? 'is-alumni' : 'is-active'}">
+                                <i class="ph ${isAlumni ? 'ph-graduation-cap' : 'ph-student'}" aria-hidden="true"></i>${escapeHtml(grade)}
+                            </span>
+                            ${adminBadge}
+                        </span>
+                        <span class="member-card-name">
+                            <strong>${escapeHtml(member.Name_Ch || member.Student_ID)}</strong>
+                            ${member.Name_En ? `<small>${escapeHtml(member.Name_En)}</small>` : ''}
+                        </span>
+                        <span class="member-card-meta">
+                            <span><i class="ph ph-identification-card" aria-hidden="true"></i>${escapeHtml(member.Student_ID)}</span>
+                            <span><i class="ph ph-buildings" aria-hidden="true"></i>${escapeHtml(member.Department || '未填系所')}</span>
+                        </span>
+                        ${previousIds.length ? `<span class="member-card-previous">曾用學號：${previousIds.map(escapeHtml).join('、')}</span>` : ''}
+                        ${isAdmin ? '<span class="member-card-edit"><i class="ph ph-pencil-simple" aria-hidden="true"></i>編輯</span>' : ''}
+                    </button>
+                </article>`;
+            }).join('');
+
+            return `<section class="member-directory-group" aria-labelledby="member-group-${group.key}">
+                <div class="member-directory-heading">
+                    <h3 id="member-group-${group.key}">${group.label}<span>${members.length} 人</span></h3>
+                </div>
+                <div class="member-directory-grid">${cards}</div>
+            </section>`;
         }).join('');
     },
 

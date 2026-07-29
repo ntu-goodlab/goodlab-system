@@ -59,9 +59,15 @@ export const logsModule = {
         let filtered = this.data.logs.filter(log => {
             const inst = this.data.instruments.find(i => i.Instrument_ID === log.Instrument_ID);
             const instName = inst ? inst.Name : log.Instrument_ID;
-            const instLoc = inst ? inst.Location : ""; 
-            
-            const text = (log.Problem_Desc + instName + log.Log_ID).toLowerCase();
+            const ownerName = this.getMemberName(log.Owner_ID || log.Reporter_ID || log.Reporter || '');
+            const text = [
+                log.Problem_Desc,
+                log.Solution,
+                instName,
+                log.Instrument_ID,
+                log.Log_ID,
+                ownerName
+            ].filter(Boolean).join(' ').toLowerCase();
             const matchText = text.includes(term);
             const matchStatus = statusFilter === 'All' ? true : log.Status === statusFilter;
             
@@ -102,7 +108,8 @@ export const logsModule = {
                 },
                 { width: '80px', align: 'center', render: row => `<span style="color:${this.getUrgencyColor(row.Urgency)}; font-weight:bold;">${row.Urgency}</span>` },
                 { 
-                    width: '110px', 
+                    width: '128px',
+                    className: 'log-date-cell',
                     // ★ 日期格式化：只取前面的 YYYY-MM-DD
                     render: row => row.Date_Reported ? row.Date_Reported.split('T')[0].split(' ')[0] : '-' 
                 },

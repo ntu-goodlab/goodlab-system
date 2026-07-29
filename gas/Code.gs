@@ -119,6 +119,35 @@ function testMaintenanceSummaryToMe() {
   });
 }
 
+function testWeeklyAdminReportToMe() {
+  runJob_('TEST_WEEKLY_ADMIN_REPORT', function () {
+    const recipient = TEST_RECIPIENT_EMAIL;
+    const members = fetchCollection_('members');
+    const dutyRecords = fetchCollection_('duty_records');
+    const routines = fetchCollection_('routines');
+    const logs = fetchCollection_('logs');
+    const instruments = fetchCollection_('instruments');
+    const accounting = fetchCollection_('accounting');
+    const today = dateKey_(new Date());
+    const thisMonday = mondayDateKey_(new Date());
+    const lastMonday = shiftDateKey_(thisMonday, -7);
+    const lastSunday = shiftDateKey_(thisMonday, -1);
+    const reportBody = '<p style="color:#526075;">報表期間：' + lastMonday + '～' + lastSunday + '</p>'
+      + sectionHtml_('1. 值日生狀況', buildDutySummary_(dutyRecords, members, lastMonday, thisMonday))
+      + sectionHtml_('2. 實驗室行事', buildRoutineSummary_(routines, today))
+      + sectionHtml_('3. 維修紀錄', buildLogsSummary_(logs, instruments, lastMonday, thisMonday))
+      + sectionHtml_('4. 公積金異動', buildAccountingSummary_(accounting, members, lastMonday, thisMonday))
+      + siteLinkHtml_('開啟 GOODLAB');
+
+    sendEmail_({
+      to: recipient,
+      subject: '【GOODLAB 測試預覽】' + today + ' 每週報表',
+      htmlBody: emailLayout_('GOODLAB 實驗室每週報表預覽', reportBody)
+    });
+    console.log('完整每週報表預覽已寄給測試信箱：' + recipient);
+  });
+}
+
 function checkDutyReminder() {
   runJob_('DUTY_REMINDER', function () {
     const members = fetchCollection_('members');
@@ -285,7 +314,7 @@ function checkWeeklyAdminReport() {
     const dutyHtml = buildDutySummary_(dutyRecords, members, lastMonday, thisMonday);
     const routineHtml = buildRoutineSummary_(routines, today);
     const logsHtml = buildLogsSummary_(logs, instruments, lastMonday, thisMonday);
-    const accountingHtml = buildAccountingSummary_(accounting, lastMonday, thisMonday);
+    const accountingHtml = buildAccountingSummary_(accounting, members, lastMonday, thisMonday);
 
     const reportBody = '<p style="color:#526075;">報表期間：' + lastMonday + '～' + lastSunday + '</p>'
       + sectionHtml_('1. 值日生狀況', dutyHtml)
@@ -494,7 +523,7 @@ function buildLogsSummary_(logs, instruments, rangeStart, rangeEnd) {
     }) : '<p>上週沒有新增維修紀錄。</p>');
 }
 
-function buildAccountingSummary_(accounting, rangeStart, rangeEnd) {
+function buildAccountingSummary_(accounting, members, rangeStart, rangeEnd) {
   const recent = accounting
     .filter(function (item) {
       const date = String(item.Created_At || item.Date || '').slice(0, 10);
@@ -504,14 +533,122 @@ function buildAccountingSummary_(accounting, rangeStart, rangeEnd) {
       return String(b.Created_At || b.Date || '').localeCompare(String(a.Created_At || a.Date || ''));
     });
 
-  if (!recent.length) return '<p>上週沒有新增帳務紀錄。</p>';
-  return '<p>上週新增：<strong>' + recent.length + '</strong> 筆。</p>'
-    + limitedListHtml_(recent, function (item) {
+  const repayments = accounting
+    .filter(function (item) {
+      const date = String(item.Payback_Date || '').slice(0, 10);
+      return item.Payer !== 'Fund'
+        && (item.Type === 'School' || item.Type === 'Lab')
+        && date >= rangeStart
+        && date < rangeEnd;
+    })
+    .sort(function (a, b) {
+      return String(b.Payback_Date || '').localeCompare(String(a.Payback_Date || ''));
+    });
+  const pending = accounting.filter(function (item) {
+    return item.Payer !== 'Fund'
+      && !item.Payback_Date
+      && (item.Type === 'School' || item.Type === 'Lab');
+  });
+  const balances = calculateAccountingBalances_(accounting);
+  const pendingAmount = pending.reduce(function (sum, item) {
+    return sum + Math.abs(Number(item.Amount) || 0);
+  }, 0);
+  const repaymentAmount = repayments.reduce(function (sum, item) {
+    return sum + Math.abs(Number(item.Amount) || 0);
+  }, 0);
+  const memberNames = {};
+  members.forEach(function (member) {
+    const name = member.Name_Ch || member.Student_ID;
+    if (member.Student_ID) memberNames[String(member.Student_ID).toLowerCase()] = name;
+    (member.Previous_Student_IDs || []).forEach(function (studentId) {
+      memberNames[String(studentId).toLowerCase()] = name;
+    });
+  });
+  const payerName = function (payerId) {
+    return memberNames[String(payerId || '').toLowerCase()] || payerId || '未指定代墊人';
+  };
+
+  let html = '<p>上週新增：<strong>' + recent.length + '</strong> 筆；'
+    + '完成還款：<strong>' + repayments.length + '</strong> 筆'
+    + (repayments.length ? '，共 <strong>' + formatUnsignedMoney_(repaymentAmount) + '</strong>' : '')
+    + '。</p>';
+
+  if (recent.length) {
+    html += '<h4 style="margin:14px 0 4px;">新增帳務</h4>'
+      + limitedListHtml_(recent, function (item) {
       const amount = Number(item.Amount) || 0;
       return escapeHtml_(String(item.Date || '').slice(0, 10) || '未填日期')
         + '｜' + escapeHtml_(item.Description || '未填項目')
         + '｜' + formatMoney_(amount);
-    });
+      });
+  }
+
+  if (repayments.length) {
+    html += '<h4 style="margin:14px 0 4px;">完成還款</h4>'
+      + limitedListHtml_(repayments, function (item) {
+        return escapeHtml_(String(item.Payback_Date || '').slice(0, 10))
+          + '｜' + escapeHtml_(payerName(item.Payer))
+          + '｜' + formatUnsignedMoney_(Math.abs(Number(item.Amount) || 0))
+          + '（' + paybackMethodLabel_(item) + '）';
+      });
+  }
+
+  html += '<div style="margin-top:14px;padding:12px 14px;border:1px solid #dce3ec;border-radius:8px;background:#f8fafc;">'
+    + '<strong>目前帳務</strong><br>'
+    + '戶頭：' + formatSignedBalance_(balances.bankBalance)
+    + '｜現金：' + formatSignedBalance_(balances.cashBalance)
+    + '｜合計：' + formatSignedBalance_(balances.totalBalance)
+    + '<br>待還款：' + pending.length + ' 筆，共 ' + formatUnsignedMoney_(pendingAmount)
+    + '</div>';
+  return html;
+}
+
+function normalizeAccountingSource_(value) {
+  return value === 'Cash' ? 'Cash' : 'Bank';
+}
+
+function accountingPaybackMethod_(item) {
+  return normalizeAccountingSource_(item.Payback_Method || item.Fund_Source);
+}
+
+function paybackMethodLabel_(item) {
+  return accountingPaybackMethod_(item) === 'Cash' ? '現金' : '戶頭轉帳';
+}
+
+function calculateAccountingBalances_(accounting) {
+  let bankBalance = 0;
+  let cashBalance = 0;
+
+  accounting.forEach(function (item) {
+    const amount = Math.abs(Number(item.Amount) || 0);
+    const type = item.Type;
+    const isFund = item.Payer === 'Fund';
+    const isPaidBack = Boolean(item.Payback_Date);
+    const fundSource = normalizeAccountingSource_(item.Fund_Source);
+
+    if (type === 'Income' || type === 'Deposit') {
+      if (fundSource === 'Cash') cashBalance += amount;
+      else bankBalance += amount;
+    } else if (type === 'Withdraw' || type === 'Withdrawal') {
+      bankBalance -= amount;
+      cashBalance += amount;
+    } else if (type === 'School' || type === 'Lab') {
+      if (isFund) {
+        if (fundSource === 'Cash') cashBalance -= amount;
+        else bankBalance -= amount;
+      } else if (isPaidBack) {
+        if (accountingPaybackMethod_(item) === 'Cash') cashBalance -= amount;
+        else bankBalance -= amount;
+      }
+      if (type === 'School' && item.Recharge_Date) bankBalance += amount;
+    }
+  });
+
+  return {
+    bankBalance: bankBalance,
+    cashBalance: cashBalance,
+    totalBalance: bankBalance + cashBalance
+  };
 }
 
 function fetchCollection_(collectionName) {
@@ -754,6 +891,15 @@ function shiftDateKey_(dateKey, days) {
 function formatMoney_(amount) {
   const rounded = Math.round(Number(amount) || 0);
   return (rounded >= 0 ? '+' : '-') + '$' + Math.abs(rounded).toLocaleString('zh-TW');
+}
+
+function formatUnsignedMoney_(amount) {
+  return '$' + Math.abs(Math.round(Number(amount) || 0)).toLocaleString('zh-TW');
+}
+
+function formatSignedBalance_(amount) {
+  const rounded = Math.round(Number(amount) || 0);
+  return (rounded < 0 ? '-' : '') + '$' + Math.abs(rounded).toLocaleString('zh-TW');
 }
 
 function escapeHtml_(value) {
