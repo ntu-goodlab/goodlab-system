@@ -74,7 +74,8 @@ export function addRoutineInterval(dateValue, routine, multiplier = 1) {
 }
 
 /**
- * 完成週期性項目後，維持舊 next_due 作為排程錨點。
+ * 完成週期性項目後，優先維持 schedule_anchor 作為固定排程錨點。
+ * 舊資料尚未有 schedule_anchor 時，才沿用 next_due。
  * 若已落後多期，持續推進到第一個晚於實際完成日的日期，但不改變原本日／月節奏。
  */
 export function calculateNextScheduledDue(routine, completedOn) {
@@ -83,7 +84,7 @@ export function calculateNextScheduledDue(routine, completedOn) {
     const completedDate = parseLocalDate(completedOn);
     if (!completedDate) return '';
 
-    const anchor = routine.next_due || routine.last_done || completedOn;
+    const anchor = routine.schedule_anchor || routine.next_due || routine.last_done || completedOn;
     let multiplier = 1;
     let candidate = addRoutineInterval(anchor, routine, multiplier);
 

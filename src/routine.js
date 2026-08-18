@@ -4,7 +4,7 @@
  * 資料模型（向下相容 interval_days 與舊分類）：
  * routines/{id}: {
  *   name, category, schedule_type, interval_value, interval_unit, interval_days,
- *   last_done, next_due, completed, completed_at, remind_days,
+ *   last_done, next_due, schedule_anchor, completed, completed_at, remind_days,
  *   url, notes, visible_to_users, created_at, updated_at
  * }
  */
@@ -274,10 +274,11 @@ export const routineModule = {
         const oneTime = getRoutineScheduleType(routine) === 'one_time';
         const now = new Date().toISOString();
         const payload = oneTime
-            ? { last_done: today, next_due: null, completed: true, completed_at: now, updated_at: now }
+            ? { last_done: today, next_due: null, schedule_anchor: null, completed: true, completed_at: now, updated_at: now }
             : {
                 last_done: today,
                 next_due: calculateNextScheduledDue(routine, today),
+                schedule_anchor: routine.schedule_anchor || routine.next_due || routine.last_done || today,
                 completed: false,
                 completed_at: null,
                 updated_at: now
@@ -365,7 +366,7 @@ export const routineModule = {
         if (help) {
             help.textContent = oneTime
                 ? '一次性項目完成後會保留紀錄，不再產生下一次日期。'
-                : '完成時會依原排定日期推進週期，不會因延後完成而改變固定節奏。';
+                : '下次日期也是固定排程的基準；延後完成不會改變節奏。若日期曾經偏移，請把下次日期改回正確日期一次。';
         }
         if (dueLabel) dueLabel.textContent = oneTime ? '預定日期' : '下次日期';
     },
@@ -400,6 +401,16 @@ export const routineModule = {
             nextDue = addRoutineInterval(lastDone, { interval_value: intervalValue, interval_unit: intervalUnit });
         }
 
+        const intervalChanged = Boolean(existing) && (
+            Number(existing.interval_value) !== intervalValue || existing.interval_unit !== intervalUnit
+        );
+        const nextDueChanged = Boolean(existing) && existing.next_due !== nextDue;
+        const scheduleAnchor = oneTime
+            ? null
+            : (!existing || intervalChanged || nextDueChanged
+                ? nextDue
+                : (existing.schedule_anchor || existing.next_due || nextDue));
+
         const now = new Date().toISOString();
         const payload = {
             name,
@@ -410,6 +421,7 @@ export const routineModule = {
             interval_days: oneTime ? null : routineIntervalToDays(intervalValue, intervalUnit),
             last_done: lastDone,
             next_due: preserveCompleted ? null : nextDue,
+            schedule_anchor: preserveCompleted ? null : scheduleAnchor,
             completed: preserveCompleted,
             completed_at: preserveCompleted ? (existing.completed_at || now) : null,
             remind_days: remindDays.length ? remindDays : [7, 3, 0],

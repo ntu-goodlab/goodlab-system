@@ -314,6 +314,14 @@ export const logsModule = {
         if (!payload.Instrument_ID) { alert("請選擇儀器"); return; }
         if (!payload.Problem_Desc) { alert("請填寫問題描述"); return; }
 
+        const existing = this.data.logs.find(log =>
+            log.Log_ID === payload.Log_ID || log._id === payload.Log_ID || log.id === payload.Log_ID
+        );
+        const now = new Date().toISOString();
+        payload.Updated_At = now;
+        if (existing?.Created_At) payload.Created_At = existing.Created_At;
+        else if (!existing) payload.Created_At = now;
+
         const btn = document.getElementById('btn-save-l');
         btn.innerText = "儲存中...";
         btn.disabled = true;
