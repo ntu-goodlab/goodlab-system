@@ -521,6 +521,8 @@ textarea { resize: vertical; min-height: 80px; }
     display: inline-flex; align-items: center; gap: 5px;
 }
 .overview-linked-routine:hover { background: #eaf2ff; border-color: #8dabdc; }
+.overview-linked-routine.is-static { cursor: default; }
+.overview-linked-routine.is-static:hover { background: #f7fbff; border-color: #c7d7f2; }
 .overview-inline-editor {
     padding: 20px; border-bottom: 1px solid var(--border-color); background: #f8fafc;
     box-shadow: inset 4px 0 0 #8fb0e5;
@@ -1598,4 +1600,57 @@ button.employment-span-value:hover { background: rgba(255, 255, 255, .4); }
 
 @media (max-width: 680px) {
     .member-directory-grid { grid-template-columns: 1fr; }
+}
+
+/* 使用說明與帳號綁定 */
+.help-button { min-height: 40px; white-space: nowrap; }
+.help-dialog { max-width: 680px; }
+.help-modal-body { color: var(--text-main); line-height: 1.65; }
+.help-modal-body p { margin: 0 0 10px; }
+.help-modal-body ul,
+.help-modal-body ol { margin: 8px 0 0; padding-left: 22px; }
+.help-modal-body li + li { margin-top: 5px; }
+.help-current-page {
+    padding: 18px; border: 1px solid #c7d7f2; border-radius: var(--radius-lg);
+    background: #f7fbff;
+}
+.help-current-page h4 { margin: 2px 0 8px; font-size: 1.05rem; }
+.help-eyebrow { color: var(--primary); font-size: .72rem; font-weight: 700; letter-spacing: .08em; }
+.help-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-color); }
+.help-section h4 { margin: 0 0 8px; font-size: 1rem; }
+.bind-account {
+    min-height: 54px; margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--border-color);
+    border-radius: var(--radius-md); background: var(--color-surface-subtle); display: flex; align-items: center; gap: 10px;
+}
+.bind-account > i { color: var(--primary); font-size: 1.35rem; }
+.bind-account > span { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.bind-account small { color: var(--text-muted); font-size: .72rem; }
+.bind-account strong { overflow-wrap: anywhere; font-size: .88rem; }
+
+/* 產編表格：桌面維持完整欄位，手機將產編與區域收進財物欄。 */
+.inventory-mobile-meta,
+.inventory-mobile-actions { display: none; }
+.inventory-item-name { color: var(--text-main); font-weight: 600; line-height: 1.4; }
+.inventory-item-model { margin-bottom: 2px; color: var(--text-muted); font-size: .8rem; }
+.inventory-link-badge {
+    padding: 2px 6px; border: 1px solid var(--border-color); border-radius: 4px;
+    background: #f1f5f9; color: var(--secondary); font-size: .75rem;
+    display: inline-flex; align-items: center; gap: 4px;
+}
+
+@media (max-width: 768px) {
+    .help-button-label { display: none; }
+    .help-button { width: 44px; min-width: 44px; padding: 0; justify-content: center; }
+    .help-dialog { max-height: min(88vh, 720px); }
+    .help-modal-body { padding-inline: 14px; }
+    .inventory-desktop-only { display: none !important; }
+    .inventory-mobile-meta {
+        margin-top: 5px; color: var(--text-muted); font-size: .75rem;
+        display: flex; flex-wrap: wrap; gap: 5px 10px;
+    }
+    .inventory-mobile-meta span { display: inline-flex; align-items: center; gap: 4px; }
+    .inventory-mobile-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .inventory-mobile-actions .btn { min-height: 44px; padding: 7px 10px; }
+    #inv-table th:last-child,
+    #inv-table td:last-child { width: 52px !important; }
 }

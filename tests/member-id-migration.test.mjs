@@ -14,7 +14,9 @@ const members = [
         Email: 'r10943138@ntu.edu.tw',
         Degree: 'Master',
         Status: 'Active',
-        Google_UID: 'google-uid'
+        Google_UID: 'google-uid',
+        Google_Email: 'personal.account@gmail.com',
+        Google_Display_Name: 'Test Member'
     },
     {
         Student_ID: 'f10800001',
@@ -87,6 +89,8 @@ test('新成員保留曾用學號、異動歷史與 Google 綁定', () => {
 
     assert.equal(migrated.Student_ID, 'f10943138');
     assert.equal(migrated.Google_UID, 'google-uid');
+    assert.equal(migrated.Google_Email, 'personal.account@gmail.com');
+    assert.equal(migrated.Google_Display_Name, 'Test Member');
     assert.equal(migrated.Degree, 'PhD');
     assert.deepEqual(migrated.Previous_Student_IDs, ['r10943138']);
     assert.deepEqual(migrated.Student_ID_History[0], {
@@ -106,5 +110,9 @@ test('改用新 Google 帳號時保留舊 UID 供歷史紀錄辨識', () => {
     });
 
     assert.equal(migrated.Google_UID, null);
+    assert.equal(migrated.Google_Email, null);
+    assert.equal(migrated.Google_Display_Name, null);
     assert.deepEqual(migrated.Previous_Google_UIDs, ['google-uid']);
+    assert.deepEqual(migrated.Previous_Google_Emails, ['personal.account@gmail.com']);
+    assert.deepEqual(migrated.Previous_Google_Display_Names, ['Test Member']);
 });

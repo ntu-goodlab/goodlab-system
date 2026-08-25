@@ -111,15 +111,25 @@ export const dashboardModule = {
         const totalCount = DUTY_CLEANING_TASKS.length + DUTY_SUPPLY_ITEMS.length;
 
         let nextMember = null;
+        let nextLabel = '完成後下一位';
         if (result?.roster?.length) {
             const nextDate = new Date();
             nextDate.setDate(nextDate.getDate() + 7);
             const nextWeekId = this._getDutyWeekId(nextDate);
             const nextRecord = this.data.duty_records.find(item => item._id === nextWeekId);
             const nextId = nextRecord?.assigned_to || nextRecord?.scheduled_to;
-            nextMember = nextId
-                ? result.roster.find(member => member.Student_ID === nextId)
-                : this._getNextDutyMember(result.roster, result.scheduledTo || assignedTo);
+            if (nextId && nextRecord?.assignment_source === 'admin') {
+                nextMember = result.roster.find(member => member.Student_ID === nextId) || null;
+                nextLabel = '下週已指定';
+            } else if (!record?.submitted) {
+                // 尚未提交時不預告換人，因為實際規則是原值日生順延。
+                nextMember = result.member || result.roster.find(member => member.Student_ID === assignedTo) || null;
+                nextLabel = '未完成將順延';
+            } else {
+                nextMember = nextId
+                    ? result.roster.find(member => member.Student_ID === nextId)
+                    : this._getNextDutyMember(result.roster, result.scheduledTo || assignedTo);
+            }
         }
 
         return {
@@ -130,6 +140,7 @@ export const dashboardModule = {
             completedCount,
             totalCount,
             nextMember,
+            nextLabel,
             submitted: Boolean(record?.submitted)
         };
     },
@@ -178,7 +189,7 @@ export const dashboardModule = {
             </div>`).join('');
 
         return `<section class="overview-panel" aria-labelledby="overview-task-heading">
-            <div class="overview-panel-header"><div><h3 id="overview-task-heading">我的待辦</h3><p>只顯示與你有關的工作</p></div></div>
+            <div class="overview-panel-header"><div><h3 id="overview-task-heading">待處理事項</h3><p>需要成員確認或操作的項目</p></div></div>
             <div class="overview-task-list">${rows}</div>
         </section>`;
     },
@@ -225,7 +236,7 @@ export const dashboardModule = {
                 ${item.content ? `<p>${escapeHtml(item.content).replace(/\n/g, '<br>')}</p>` : ''}
                 <div class="overview-notice-meta">
                     ${item.expires_on ? `<span>顯示至 ${displayDate(item.expires_on)}</span>` : ''}
-                    ${this._renderLinkedRoutine(item)}
+                    ${this._renderLinkedRoutine(item, isAdmin)}
                     ${safeUrl(item.link_url) ? `<a class="overview-inline-link" href="${safeUrl(item.link_url)}" target="_blank" rel="noopener noreferrer"><i class="ph ph-arrow-square-out" aria-hidden="true"></i>${escapeHtml(item.link_label || '開啟相關連結')}</a>` : ''}
                 </div>
             </div>
@@ -247,12 +258,15 @@ export const dashboardModule = {
         </section>`;
     },
 
-    _renderLinkedRoutine: function(item) {
+    _renderLinkedRoutine: function(item, canOpenRoutine = false) {
         if (!item.routine_id) return '';
         const routine = (this.data.routines || []).find(entry => entry._id === item.routine_id);
         if (!routine) return '';
         const detail = [routine.category, routine.next_due].filter(Boolean).join(' · ');
-        return `<button type="button" class="overview-linked-routine" onclick="app.switchTab('routine')"><i class="ph ph-calendar-check" aria-hidden="true"></i>${escapeHtml(detail || routine.name || '查看相關行事')}</button>`;
+        const label = escapeHtml(detail || routine.name || '相關行事');
+        return canOpenRoutine
+            ? `<button type="button" class="overview-linked-routine" onclick="app.switchTab('routine')"><i class="ph ph-calendar-check" aria-hidden="true"></i>${label}</button>`
+            : `<span class="overview-linked-routine is-static"><i class="ph ph-calendar-check" aria-hidden="true"></i>${label}</span>`;
     },
 
     _renderStatusStrip: function(dutyData, isAdmin, accounting = null, openLogs = 0) {
@@ -271,7 +285,7 @@ export const dashboardModule = {
                 <span class="overview-duty-main">
                     <span class="overview-duty-label">本週值日生</span>
                     <span class="overview-duty-name-row"><strong>${escapeHtml(currentName)}</strong><span class="status-badge ${statusClass}">${statusLabel}</span></span>
-                    <span class="overview-duty-progress">已完成 ${dutyData.completedCount}/${dutyData.totalCount} 項 · 下週預計 ${escapeHtml(dutyData.nextMember?.Name_Ch || '尚未排定')}</span>
+                    <span class="overview-duty-progress">已完成 ${dutyData.completedCount}/${dutyData.totalCount} 項 · ${escapeHtml(dutyData.nextLabel)} ${escapeHtml(dutyData.nextMember?.Name_Ch || '尚未排定')}</span>
                     ${handoffText}
                 </span>
                 <span class="overview-duty-action">查看值日工作<i class="ph ph-arrow-right" aria-hidden="true"></i></span>
@@ -425,7 +439,6 @@ export const dashboardModule = {
         return `<section class="overview-panel" aria-labelledby="overview-links-heading">
             <div class="overview-panel-header"><div><h3 id="overview-links-heading">常用入口</h3><p>快速進入常用工作與資料</p></div></div>
             <div class="overview-shortcuts">
-                <button type="button" onclick="app.openLogModal()"><i class="ph ph-warning-octagon" aria-hidden="true"></i><span><strong>回報設備問題</strong><small>新增問題回報</small></span></button>
                 <button type="button" onclick="app.switchTab('duty')"><i class="ph ph-broom" aria-hidden="true"></i><span><strong>值日生工作</strong><small>清潔與耗材清點</small></span></button>
                 <button type="button" onclick="app.switchTab('inventory')"><i class="ph ph-list-checks" aria-hidden="true"></i><span><strong>產編清點</strong><small>查看或進行盤點</small></span></button>
                 <button type="button" onclick="app.switchTab('instruments')"><i class="ph ph-microscope" aria-hidden="true"></i><span><strong>儀器設備</strong><small>查詢儀器資料</small></span></button>

@@ -1,0 +1,220 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function ownsMember(studentId) {
+      return isSignedIn()
+        && studentId is string
+        && exists(/databases/$(database)/documents/members/$(studentId))
+        && get(/databases/$(database)/documents/members/$(studentId)).data.Google_UID == request.auth.uid;
+    }
+
+    function isActiveMember(studentId) {
+      return studentId is string
+        && exists(/databases/$(database)/documents/members/$(studentId))
+        && get(/databases/$(database)/documents/members/$(studentId)).data.Status == 'Active';
+    }
+
+    function validMemberBinding() {
+      return request.auth.token.email_verified == true
+        && (!('Google_UID' in resource.data)
+          || resource.data.Google_UID == null
+          || resource.data.Google_UID == '')
+        && request.resource.data.Google_UID == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Google_UID']);
+    }
+
+    function validGoogleIdentitySync(memberId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return request.auth.token.email_verified == true
+        && ownsMember(memberId)
+        && request.resource.data.Google_Email == request.auth.token.email
+        && changed.hasOnly(['Google_Email', 'Google_Display_Name'])
+        && (!changed.hasAny(['Google_Display_Name']) || (
+          request.resource.data.Google_Display_Name is string
+          && request.resource.data.Google_Display_Name.size() <= 120
+          && (!('name' in request.auth.token)
+            || request.resource.data.Google_Display_Name == request.auth.token.name)
+        ));
+    }
+
+    function validInventoryUserUpdate(propId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return propId != '_SETTINGS_'
+        && get(/databases/$(database)/documents/inventory/_SETTINGS_).data.IsOpen == true
+        && ownsMember(request.resource.data.Updated_By_Student_ID)
+        && request.resource.data.Updated_By_UID == request.auth.uid
+        && changed.hasOnly([
+          'Status', 'Checked_By', 'Checked_By_Student_ID', 'Location',
+          'Personal_Remark', 'Updated_By_UID', 'Updated_By_Student_ID', 'Updated_At'
+        ])
+        && request.resource.data.Status in ['Pending', 'Checked']
+        && (!('Location' in request.resource.data)
+          || (request.resource.data.Location is string && request.resource.data.Location.size() <= 100))
+        && (!('Personal_Remark' in request.resource.data)
+          || (request.resource.data.Personal_Remark is string && request.resource.data.Personal_Remark.size() <= 500))
+        && (
+          !changed.hasAny(['Status', 'Checked_By', 'Checked_By_Student_ID'])
+          || (
+            request.resource.data.Status == 'Checked'
+            && request.resource.data.Checked_By == request.auth.uid
+            && request.resource.data.Checked_By_Student_ID == request.resource.data.Updated_By_Student_ID
+          )
+          || (
+            request.resource.data.Status == 'Pending'
+            && request.resource.data.Checked_By == null
+            && request.resource.data.Checked_By_Student_ID == null
+          )
+        );
+    }
+
+    function validDutyCreate(weekId) {
+      return request.resource.data.keys().hasOnly([
+          'week_start', 'scheduled_to', 'assigned_to', 'assignment_source', 'status',
+          'carried_from', 'carried_over_to', 'carryover_count', 'substitute_pending',
+          'substitute_from', 'cleaning', 'supplies', 'note', 'submitted',
+          'submitted_at', 'created_by_uid', 'created_by_student_id', 'updated_at'
+        ])
+        && request.resource.data.keys().hasAll([
+          'week_start', 'scheduled_to', 'assigned_to', 'assignment_source',
+          'status', 'cleaning', 'supplies', 'note', 'submitted', 'created_by_uid'
+        ])
+        && request.resource.data.week_start == weekId
+        && request.resource.data.status == 'pending'
+        && request.resource.data.submitted == false
+        && request.resource.data.note is string
+        && request.resource.data.note.size() <= 1000
+        && request.resource.data.created_by_uid == request.auth.uid
+        && (isAdmin() || (
+          ownsMember(request.resource.data.assigned_to)
+          && request.resource.data.created_by_student_id == request.resource.data.assigned_to
+          && request.resource.data.assignment_source in ['auto', 'carryover']
+        ));
+    }
+
+    function validDutyAssigneeUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return ownsMember(resource.data.assigned_to)
+        && resource.data.submitted == false
+        && (!('note' in request.resource.data)
+          || (request.resource.data.note is string && request.resource.data.note.size() <= 1000))
+        && (
+          changed.hasOnly(['cleaning', 'supplies', 'note', 'updated_at'])
+          || (
+            changed.hasOnly(['note', 'status', 'submitted', 'submitted_at', 'updated_at'])
+            && request.resource.data.status == 'submitted'
+            && request.resource.data.submitted == true
+            && request.resource.data.submitted_at is string
+          )
+          || (
+            changed.hasOnly(['substitute_pending', 'substitute_from', 'updated_at'])
+            && request.resource.data.substitute_from == resource.data.assigned_to
+            && request.resource.data.substitute_pending != resource.data.assigned_to
+            && isActiveMember(request.resource.data.substitute_pending)
+          )
+          || (
+            changed.hasOnly(['status', 'carried_over_to', 'updated_at'])
+            && request.resource.data.status == 'carried_over'
+            && request.resource.data.carried_over_to is string
+          )
+        );
+    }
+
+    function validDutyInviteeUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return ownsMember(resource.data.substitute_pending)
+        && resource.data.submitted == false
+        && (
+          (
+            changed.hasOnly([
+              'assigned_to', 'assignment_source', 'substitute_pending',
+              'substitute_from', 'updated_at'
+            ])
+            && request.resource.data.assigned_to == resource.data.substitute_pending
+            && request.resource.data.assignment_source == 'substitute'
+            && request.resource.data.substitute_pending == null
+          )
+          || (
+            changed.hasOnly(['substitute_pending', 'substitute_from', 'updated_at'])
+            && request.resource.data.substitute_pending == null
+            && request.resource.data.substitute_from == null
+          )
+        );
+    }
+
+    match /members/{memberId} {
+      // 尚未綁定的登入者必須讀取名單才能完成首次綁定。
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || validMemberBinding() || validGoogleIdentitySync(memberId);
+    }
+
+    match /admins/{uid} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /instruments/{instrumentId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /logs/{logId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /inventory/{propId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (isSignedIn() && validInventoryUserUpdate(propId));
+    }
+
+    match /duty_records/{weekId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && validDutyCreate(weekId);
+      allow update: if isAdmin()
+        || (isSignedIn() && validDutyAssigneeUpdate())
+        || (isSignedIn() && validDutyInviteeUpdate());
+      allow delete: if isAdmin();
+    }
+
+    match /bulletins/{bulletinId} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.published == true);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /routines/{routineId} {
+      allow read: if isSignedIn() && (isAdmin() || resource.data.visible_to_users == true);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /accounting/{transactionId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /employments/{employmentId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /inventory_archive/{document=**} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

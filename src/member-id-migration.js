@@ -174,6 +174,18 @@ export function buildMigratedMember(sourceMember, options) {
     if (!options.preserveGoogleBinding && sourceMember?.Google_UID) {
         previousGoogleUids.push(sourceMember.Google_UID);
     }
+    const previousGoogleEmails = Array.isArray(sourceMember?.Previous_Google_Emails)
+        ? [...sourceMember.Previous_Google_Emails]
+        : [];
+    if (!options.preserveGoogleBinding && sourceMember?.Google_Email) {
+        previousGoogleEmails.push(sourceMember.Google_Email);
+    }
+    const previousGoogleDisplayNames = Array.isArray(sourceMember?.Previous_Google_Display_Names)
+        ? [...sourceMember.Previous_Google_Display_Names]
+        : [];
+    if (!options.preserveGoogleBinding && sourceMember?.Google_Display_Name) {
+        previousGoogleDisplayNames.push(sourceMember.Google_Display_Name);
+    }
 
     history.push({
         from: oldId,
@@ -191,7 +203,11 @@ export function buildMigratedMember(sourceMember, options) {
         Status: 'Active',
         Leave_Date: '',
         Google_UID: options.preserveGoogleBinding ? (sourceMember?.Google_UID || null) : null,
+        Google_Email: options.preserveGoogleBinding ? (sourceMember?.Google_Email || null) : null,
+        Google_Display_Name: options.preserveGoogleBinding ? (sourceMember?.Google_Display_Name || null) : null,
         Previous_Google_UIDs: [...new Set(previousGoogleUids.filter(Boolean))],
+        Previous_Google_Emails: [...new Set(previousGoogleEmails.filter(Boolean))],
+        Previous_Google_Display_Names: [...new Set(previousGoogleDisplayNames.filter(Boolean))],
         Previous_Student_IDs: uniquePreviousIds,
         Student_ID_History: history,
         Student_ID_Changed_At: options.changedAt,

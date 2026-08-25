@@ -6,7 +6,7 @@
 import { db, doc, setDoc } from './firebase.js';
 import { LOCATIONS_WITH_OTHER } from './constants.js';
 import { UI } from '../shared.js';
-import { generateId, formatDateForInput } from './utils.js';
+import { generateId, formatDateForInput, escapeHtml } from './utils.js';
 import { fillInstrumentSelect } from './ui.js';
 
 export const logsModule = {
@@ -115,11 +115,11 @@ export const logsModule = {
                 },
                 { width: '150px', render: row => {
                     const inst = this.data.instruments.find(i => i.Instrument_ID === row.Instrument_ID);
-                    return inst ? inst.Name : '-';
+                    return escapeHtml(inst ? inst.Name : '-');
                 }},
-                { className: 'hide-mobile', render: row => row.Problem_Desc },
-                { className: 'hide-mobile', render: row => `<span style="color:var(--success);">${row.Solution || '-'}</span>` },
-                { width: '100px', className: 'hide-mobile', render: row => this.getMemberName(row.Owner_ID || row.Reporter_ID || row.Reporter) },
+                { className: 'hide-mobile', render: row => escapeHtml(row.Problem_Desc) },
+                { className: 'hide-mobile', render: row => `<span style="color:var(--success);">${escapeHtml(row.Solution || '-')}</span>` },
+                { width: '100px', className: 'hide-mobile', render: row => escapeHtml(this.getMemberName(row.Owner_ID || row.Reporter_ID || row.Reporter)) },
                 { width: '80px', align: 'center', render: row => `<button onclick="event.stopPropagation(); app.openLogModal('${row.Log_ID}')" class="btn btn-sm btn-secondary" ${isAdmin?'':'disabled'}><i class="ph ph-pencil-simple"></i></button>` }
             ],
             emptyMessage: "目前沒有任何符合的維修紀錄"
@@ -147,6 +147,11 @@ export const logsModule = {
     openLogModal: function(inputData = null) {
         const modalId = 'log-modal';
         const isAdmin = this.currentRole === 'Admin';
+
+        if (!isAdmin) {
+            this.showNotification('設備問題回報目前僅由 Admin 建立。', 'warning');
+            return;
+        }
         
         // 1. 強制識別資料來源
         let data = null;
@@ -160,11 +165,6 @@ export const logsModule = {
             }
         } else if (inputData && typeof inputData === 'object') {
             data = inputData;
-        }
-
-        if (data && !isAdmin) {
-            this.showNotification('一般成員只能新增設備問題回報。', 'warning');
-            return;
         }
 
         const title = data ? '編輯維修紀錄' : '回報維修問題';
@@ -220,41 +220,35 @@ export const logsModule = {
             this.filterLogInstruments('', '');
         }
 
-        // 4. 權限與鎖定邏輯 (修正 Readonly 衝突)
-        const isLocked = data && data.Status === 'Closed' && !isAdmin;
-        
+        // 4. 維修表單目前只開放 Admin。
         const fields = ['Log_Location_Filter', 'Log_Instrument_ID', 'Owner_ID', 'Date_Reported', 'Problem_Desc'];
         fields.forEach(id => {
             const el = document.getElementById(id);
             if (el) {
-                if (el.tagName === 'SELECT' || el.type === 'date') el.disabled = isLocked;
-                else el.readOnly = isLocked;
+                if (el.tagName === 'SELECT' || el.type === 'date') el.disabled = false;
+                else el.readOnly = false;
             }
         });
         const ownerSelect = document.getElementById('Owner_ID');
-        if (ownerSelect) ownerSelect.disabled = !isAdmin || isLocked;
+        if (ownerSelect) ownerSelect.disabled = false;
 
-        // 一般成員只需要填寫回報內容；處理狀態與結案欄位由 Admin 管理。
         ['Log_Status', 'Solution', 'Date_Resolved'].forEach(id => {
             const fieldGroup = document.getElementById(id)?.closest('.form-group');
-            if (fieldGroup) fieldGroup.style.display = isAdmin ? '' : 'none';
+            if (fieldGroup) fieldGroup.style.display = '';
         });
-        const canEditSolution = isAdmin;
-        document.getElementById('Solution').readOnly = !canEditSolution;
-        document.getElementById('Date_Resolved').disabled = !canEditSolution;
-        document.getElementById('Log_Status').disabled = !isAdmin;
+        document.getElementById('Solution').readOnly = false;
+        document.getElementById('Date_Resolved').disabled = false;
+        document.getElementById('Log_Status').disabled = false;
 
-        // 火焰圖示點擊鎖定
         const urgencyDiv = document.getElementById('urgency-rating');
         if (urgencyDiv) {
-            urgencyDiv.style.pointerEvents = isLocked ? 'none' : 'auto';
-            urgencyDiv.style.opacity = isLocked ? '0.6' : '1';
+            urgencyDiv.style.pointerEvents = 'auto';
+            urgencyDiv.style.opacity = '1';
         }
 
-        // 按鈕顯示隱藏
         const saveBtn = document.getElementById('btn-save-l');
         const delBtn = document.getElementById('btn-del-l');
-        if (saveBtn) saveBtn.style.display = isLocked ? 'none' : 'block';
+        if (saveBtn) saveBtn.style.display = 'block';
         if (delBtn) delBtn.style.display = (data && isAdmin) ? 'block' : 'none';
 
         UI.openModal({ modalId, title });
@@ -292,6 +286,10 @@ export const logsModule = {
 
     // === 儲存維修紀錄 ===
     saveLog: async function() {
+        if (this.currentRole !== 'Admin') {
+            this.showNotification('設備問題回報目前僅由 Admin 建立。', 'warning');
+            return;
+        }
         const payload = {};
         document.querySelectorAll('#log-modal input, #log-modal select, #log-modal textarea').forEach(el => {
             // ★ Phase 1 修復：先排除輔助欄位，再做 replace，避免 'Log_Location_Filter' 變成 'Location_Filter' 後判斷失效
@@ -303,16 +301,12 @@ export const logsModule = {
             payload[key] = el.value;
         });
 
-        if (this.currentRole !== 'Admin') {
-            payload.Owner_ID = this.currentMember?.Student_ID || '';
-            payload.Reporter_UID = this.currentUser?.uid || '';
-            payload.Status = 'Open';
-            payload.Solution = '';
-            payload.Date_Resolved = '';
-        }
-
         if (!payload.Instrument_ID) { alert("請選擇儀器"); return; }
+        payload.Problem_Desc = String(payload.Problem_Desc || '').trim();
+        payload.Solution = String(payload.Solution || '').trim();
         if (!payload.Problem_Desc) { alert("請填寫問題描述"); return; }
+        if (payload.Problem_Desc.length > 2000) { alert("問題描述請控制在 2000 字以內"); return; }
+        if (payload.Solution.length > 3000) { alert("解決方案請控制在 3000 字以內"); return; }
 
         const existing = this.data.logs.find(log =>
             log.Log_ID === payload.Log_ID || log._id === payload.Log_ID || log.id === payload.Log_ID

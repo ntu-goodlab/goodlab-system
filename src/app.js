@@ -61,10 +61,10 @@ const app = {
     // --- 頁面說明文案 ---
     helpDocs: {
         'members': `
-            <h3 style="color: var(--primary); border-bottom: 2px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px;">人員管理與權限控制</h3>
+            <h3 style="color: var(--primary); border-bottom: 2px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px;">實驗室成員與權限控制</h3>
             <p style="margin-bottom: 10px;">本模組負責管理實驗室成員資料、帳號綁定與系統操作權限。</p>
             <ul style="margin-top: 10px; padding-left: 20px; line-height: 1.6;">
-                <li><strong>帳號綁定流程：</strong>新生需先由 Admin 於此處建立「學號」。新生使用 Google 帳號登入系統後，輸入該學號即可完成系統綁定。</li>
+                <li><strong>帳號綁定流程：</strong>新生需先由 Admin 於此處建立「學號」。新生可使用自己的任一 Google 帳號登入，輸入尚未被認領的學號即可完成綁定；學校通知信箱與 Google 登入信箱會分開保存。</li>
                 <li><strong>學號異動：</strong>逕博或重新入學時，請從成員編輯頁使用「變更學號」，系統會先預覽並一次轉移相關資料。</li>
                 <li><strong>權限層級說明：</strong>
                     <ul>
@@ -127,6 +127,25 @@ const app = {
         'employment': `
             <h3 style="color: var(--primary); border-bottom: 2px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px;">學生聘僱管理</h3>
             <p style="margin-bottom: 10px;">管理各計畫的學生聘僱紀錄，包含甘特圖與 Excel 匯出。僅 Admin 可見。</p>`
+    },
+
+    // 一般成員看到的是任務導向說明，避免把 Admin 操作細節混在一起。
+    userHelpDocs: {
+        'overview': `
+            <p>這裡集中顯示本週值日、公告、Meeting、近期行事與實驗室狀況。</p>
+            <ul><li>點選值日區塊可查看本週工作。</li><li>維修與行事摘要會隨資料更新，不必等每週信件。</li><li>公告若附有連結，可直接由公告開啟。</li></ul>`,
+        'duty': `
+            <p>所有成員都能看到本週輪值與順序；只有當週值日生及 Admin 能修改清單。</p>
+            <ul><li>勾完清潔與耗材後再提交，提交後即封存。</li><li>若本週未完成，會由同一位值日生順延到下週。</li><li>需要代班時先送出邀請，對方接受後才會轉移。</li><li>備註可寫補貨、叫貨、異常或交接事項。</li></ul>`,
+        'inventory': `
+            <p>盤點開放時，一般成員可以更新盤點狀態、實驗區域與細項位置。</p>
+            <ul><li>紅色代表未盤點，綠色代表已盤點。</li><li>關閉盤點期間仍可搜尋與查看資料，但不能修改。</li><li>儀器與產編的關聯由 Admin 管理。</li></ul>`,
+        'instruments': `
+            <p>可依名稱或儀器編號搜尋，並用實驗區域縮小範圍。</p>
+            <ul><li>綠點代表使用中，紅點代表停用。</li><li>發現設備異常時請直接通知 Admin。</li><li>維修紀錄與問題回報目前由 Admin 維護。</li></ul>`,
+        'members': `
+            <p>查看實驗室成員的姓名、學號、身分與聯絡資訊。</p>
+            <ul><li>可用姓名或學號搜尋。</li><li>成員資料有誤時，請聯絡 Admin 修改。</li></ul>`
     },
 
     // --- 工具函式（混入到 app 上，讓各模組可以透過 this. 呼叫）---
@@ -275,7 +294,7 @@ const app = {
         const titleMap = {
             'welcome': '歡迎',
             'overview': '實驗室總覽',
-            'members': '人員管理',
+            'members': '實驗室成員',
             'instruments': '儀器設備',
             'logs': '維修紀錄',
             'accounting': '公積金報帳',
@@ -327,13 +346,13 @@ const app = {
             accounting: { dataKey: 'accounting', withId: false, onData: () => { this.renderAccounting(); this.calcDashboard(); this.renderOverview(); } },
             routines: { dataKey: 'routines', withId: true, onData: () => { this.renderRoutine(); this.renderOverview(); } },
             public_routines: {
-                collectionName: 'routines', dataKey: 'routines', withId: true,
+                collectionName: 'routines', userFacingName: '公開行事', dataKey: 'routines', withId: true,
                 source: () => query(collection(db, 'routines'), where('visible_to_users', '==', true)),
                 onData: () => this.renderOverview()
             },
             bulletins: { dataKey: 'bulletins', withId: true, onData: () => this.renderOverview() },
             public_bulletins: {
-                collectionName: 'bulletins', dataKey: 'bulletins', withId: true,
+                collectionName: 'bulletins', userFacingName: '公開公告', dataKey: 'bulletins', withId: true,
                 source: () => query(collection(db, 'bulletins'), where('published', '==', true)),
                 onData: () => this.renderOverview()
             },
@@ -379,7 +398,13 @@ const app = {
                 this.data[item.dataKey] = [];
                 if (name === 'members') this.membersLoaded = true;
                 console.warn(`[GOODLAB] ${name} listener unavailable: ${error.code || error.message}`);
-                if (this.currentUser) this.showNotification(`無法載入${item.collectionName || name}資料，請重新整理或聯絡管理員。`, 'error');
+                if (this.currentUser) {
+                    const dataLabel = item.userFacingName || item.collectionName || name;
+                    const permissionHelp = error.code === 'permission-denied' && name === 'public_routines'
+                        ? 'Firebase 的一般成員行事讀取規則尚未發布，請 Admin 發布最新 firestore.rules 後再重新整理。'
+                        : '請重新整理；若仍失敗，請將此訊息提供給 Admin。';
+                    this.showNotification(`無法載入${dataLabel}：${permissionHelp}`, 'error', 8000);
+                }
                 item.onData();
                 const migrationPanel = document.getElementById('member-id-migration');
                 if (migrationPanel && !migrationPanel.classList.contains('hidden')) {

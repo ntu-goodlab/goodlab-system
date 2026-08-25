@@ -390,6 +390,59 @@ function showAutomationStatus() {
   }, null, 2));
 }
 
+/**
+ * 正式上線前的唯讀檢查：不寄信、不修改 Firestore，也不重建觸發器。
+ * 執行紀錄顯示 READY 才代表排程、網址、收件名單與寄信配額皆已就緒。
+ */
+function verifyLaunchReadiness() {
+  const properties = PropertiesService.getScriptProperties().getProperties();
+  const expectedHandlers = ['checkDutyReminder', 'checkDutyCompletionNotification', 'checkWeeklyAdminReport'];
+  const installedHandlers = ScriptApp.getProjectTriggers().map(function (trigger) {
+    return trigger.getHandlerFunction();
+  });
+  const missingHandlers = expectedHandlers.filter(function (handler) {
+    return installedHandlers.indexOf(handler) === -1;
+  });
+  const duplicateHandlers = expectedHandlers.filter(function (handler) {
+    return installedHandlers.filter(function (installed) { return installed === handler; }).length > 1;
+  });
+  const members = fetchCollection_('members');
+  const dutyRoster = getDutyRoster_(members);
+  const dutyRosterWithoutEmail = dutyRoster
+    .filter(function (member) { return !isEmail_(member.Email); })
+    .map(function (member) { return member.Student_ID; });
+  const activeAdminEmails = members
+    .filter(function (member) {
+      return member.Role === 'Admin' && member.Status === 'Active' && isEmail_(member.Email);
+    })
+    .map(function (member) { return member.Email; });
+  const siteUrl = (properties[PROPERTY_KEYS.siteUrl] || '').trim();
+  const remainingQuota = MailApp.getRemainingDailyQuota();
+  const problems = [];
+
+  if (!properties[PROPERTY_KEYS.projectId]) problems.push('缺少 FIREBASE_PROJECT_ID');
+  if (!/^https:\/\//i.test(siteUrl)) problems.push('GOODLAB_SITE_URL 尚未設定為 https 網址');
+  if (missingHandlers.length) problems.push('缺少觸發器：' + missingHandlers.join(', '));
+  if (duplicateHandlers.length) problems.push('觸發器重複：' + duplicateHandlers.join(', '));
+  if (!activeAdminEmails.length) problems.push('沒有可收週報的 Active Admin Email');
+  if (!dutyRoster.length) problems.push('目前沒有可輪值的 Active Master 成員');
+  if (dutyRosterWithoutEmail.length) problems.push('值日名單缺少 Email：' + dutyRosterWithoutEmail.join(', '));
+  if (remainingQuota < 10) problems.push('今日剩餘寄信配額不足 10 封');
+
+  const report = {
+    status: problems.length ? 'NOT_READY' : 'READY',
+    siteUrl: siteUrl || null,
+    remainingDailyQuota: remainingQuota,
+    activeAdminRecipients: activeAdminEmails.length,
+    dutyRosterMembers: dutyRoster.length,
+    installedHandlers: installedHandlers,
+    problems: problems
+  };
+  console.log(JSON.stringify(report, null, 2));
+  if (problems.length) throw new Error('尚未完成上線設定：' + problems.join('；'));
+  return report;
+}
+
 function resolveDutyRecordForWeek_(records, weekId) {
   const currentRecord = records.find(function (item) { return item._id === weekId; }) || null;
   if (currentRecord && (

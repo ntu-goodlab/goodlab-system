@@ -106,6 +106,7 @@ Apps Script 的每週觸發器會在指定小時內選擇一個時間執行，�
 4. `testMaintenanceSummaryToMe`
 5. `testWeeklyAdminReportToMe`
 6. `showAutomationStatus`
+7. `verifyLaunchReadiness`
 
 `checkDutyReminder` 會寄給尚未提交的當週值日生（含上週未完成的順延者），`checkDutyCompletionNotification` 會把尚未通知的完成摘要寄給全體在學成員，`checkWeeklyAdminReport` 會寄給所有 Active Admin，並標示上週是否已順延；只有在確認要送出正式信件時才手動執行，否則交由排程首次觸發。
 
@@ -116,6 +117,18 @@ Apps Script 的每週觸發器會在指定小時內選擇一個時間執行，�
 - 三個 trigger handler
 - 對應工作的 `lastSuccess...` 時間
 - `lastError...` 為 null 或不存在
+
+`verifyLaunchReadiness` 是最後一道唯讀檢查，不會寄信、不會修改 Firestore，也不會重建觸發器。執行紀錄必須顯示 `status: "READY"`；若為 `NOT_READY`，錯誤訊息會直接列出缺少的 Script Property、觸發器、收件信箱或配額。
+
+## 正式上線當天（約 5 分鐘）
+
+1. 確認 `GOODLAB_SITE_URL` 為 `https://ntu-goodlab.github.io/goodlab-system/`。
+2. 執行 `installTriggers`；它會先清掉舊的同名 trigger，避免重複寄信。
+3. 執行 `verifyLaunchReadiness`，必須看到 `READY`。
+4. 到 Apps Script 左側「觸發條件」確認只有三筆 GOODLAB 排程。
+5. 不要手動執行三個 `check...` 正式函式；讓排程依時間開始寄送即可。
+
+完成上述步驟後，寄信功能才算正式啟用。GitHub Pages 部署本身不會啟動 GAS trigger。
 
 如果目前本週值日已完成，`checkDutyReminder` 不寄信是正常結果，執行紀錄會寫明原因。
 

@@ -16,6 +16,17 @@ export function generateId(prefix) {
     return `${prefix}_${yyyy}${mm}${dd}${hh}${min}${ss}_${rand}`;
 }
 
+// Firestore 文字在插入 innerHTML 前一律先轉義，避免使用者輸入被當成標記執行。
+export function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, character => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    })[character]);
+}
+
 // 日期格式化（YYYY-MM-DD），已修正時區偏移
 export function formatDateForInput(dateStr) {
     if (!dateStr || dateStr === "-") return "";

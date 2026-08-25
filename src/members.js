@@ -40,6 +40,17 @@ function memberDegreeLabel(member) {
     return member.Degree || '未設定學位';
 }
 
+function memberEnglishName(member) {
+    const givenOrFullName = String(member?.Name_En || '').trim();
+    const legacySurname = String(member?.Surname_En || '').trim();
+    if (!legacySurname) return givenOrFullName;
+    const normalizedName = givenOrFullName.toLocaleLowerCase('en');
+    const normalizedSurname = legacySurname.toLocaleLowerCase('en');
+    return normalizedName.split(/\s+/).includes(normalizedSurname)
+        ? givenOrFullName
+        : [givenOrFullName, legacySurname].filter(Boolean).join(' ');
+}
+
 function studentIdSortParts(value) {
     const normalized = String(value || '').trim().toUpperCase();
     const match = /^([A-Z]+)(\d{2,3})/.exec(normalized);
@@ -112,7 +123,7 @@ export const membersModule = {
                 const previousIds = Array.isArray(member.Previous_Student_IDs) ? member.Previous_Student_IDs : [];
                 const searchable = [
                     member.Name_Ch,
-                    member.Name_En,
+                    memberEnglishName(member),
                     member.Student_ID,
                     member.Department,
                     ...previousIds
@@ -158,7 +169,7 @@ export const membersModule = {
                         </span>
                         <span class="member-card-name">
                             <strong>${escapeHtml(member.Name_Ch || member.Student_ID)}</strong>
-                            ${member.Name_En ? `<small>${escapeHtml(member.Name_En)}</small>` : ''}
+                            ${memberEnglishName(member) ? `<small>${escapeHtml(memberEnglishName(member))}</small>` : ''}
                         </span>
                         <span class="member-card-meta">
                             <span><i class="ph ph-identification-card" aria-hidden="true"></i>${escapeHtml(member.Student_ID)}</span>
@@ -230,6 +241,9 @@ export const membersModule = {
                     }
                 }
             });
+            // 舊資料曾把姓氏與名字分欄；開啟後合併到單一完整姓名欄位，下一次儲存即完成清理。
+            document.getElementById('Name_En').value = memberEnglishName(m);
+            document.getElementById('Surname_En').value = '';
             document.getElementById('Student_ID').disabled = true;
             this.setMemberStatus(m.Status || 'Active');
             const previousIds = Array.isArray(m.Previous_Student_IDs) ? m.Previous_Student_IDs.filter(Boolean) : [];
@@ -240,9 +254,13 @@ export const membersModule = {
 
             if (m.Google_UID) {
                 document.getElementById('Bind_Status').value = "已綁定";
+                document.getElementById('Google_Display_Name').value = m.Google_Display_Name || '尚未記錄（本人下次登入後自動補上）';
+                document.getElementById('Google_Email').value = m.Google_Email || '尚未記錄（本人下次登入後自動補上）';
                 document.getElementById('btn-unbind').classList.remove('hidden');
             } else {
                 document.getElementById('Bind_Status').value = "未綁定";
+                document.getElementById('Google_Display_Name').value = '';
+                document.getElementById('Google_Email').value = '';
                 document.getElementById('btn-unbind').classList.add('hidden');
             }
         } else {
@@ -250,6 +268,8 @@ export const membersModule = {
             if (btnDel) btnDel.classList.add('hidden'); 
             document.getElementById('Student_ID').disabled = false;
             document.getElementById('Bind_Status').value = "未綁定";
+            document.getElementById('Google_Display_Name').value = '';
+            document.getElementById('Google_Email').value = '';
             document.getElementById('btn-unbind').classList.add('hidden');
             if (previousGroup) previousGroup.hidden = true;
             if (btnMigration) btnMigration.classList.add('hidden');
@@ -504,13 +524,27 @@ export const membersModule = {
             ...(Array.isArray(member?.Previous_Google_UIDs) ? member.Previous_Google_UIDs : []),
             member?.Google_UID
         ].filter(Boolean);
+        const previousGoogleEmails = [
+            ...(Array.isArray(member?.Previous_Google_Emails) ? member.Previous_Google_Emails : []),
+            member?.Google_Email
+        ].filter(Boolean);
+        const previousGoogleDisplayNames = [
+            ...(Array.isArray(member?.Previous_Google_Display_Names) ? member.Previous_Google_Display_Names : []),
+            member?.Google_Display_Name
+        ].filter(Boolean);
         
         try {
             await updateDoc(doc(db, "members", id), {
                 Google_UID: null,
-                Previous_Google_UIDs: [...new Set(previousGoogleUids)]
+                Google_Email: null,
+                Google_Display_Name: null,
+                Previous_Google_UIDs: [...new Set(previousGoogleUids)],
+                Previous_Google_Emails: [...new Set(previousGoogleEmails)],
+                Previous_Google_Display_Names: [...new Set(previousGoogleDisplayNames)]
             });
             document.getElementById('Bind_Status').value = "未綁定";
+            document.getElementById('Google_Display_Name').value = '';
+            document.getElementById('Google_Email').value = '';
             document.getElementById('btn-unbind').classList.add('hidden');
             this.showNotification("已成功解除綁定");
         } catch (e) {
@@ -537,7 +571,7 @@ export const membersModule = {
         
         const payload = {};
         document.querySelectorAll('#member-modal input, #member-modal select').forEach(el => {
-            if (el.closest('#member-id-migration') || el.id === 'Bind_Status') return;
+            if (el.closest('#member-id-migration') || ['Bind_Status', 'Google_Email', 'Google_Display_Name'].includes(el.id)) return;
             let val = el.value.trim();
             if (el.id === 'Email' || el.id === 'Student_ID') val = val.toLowerCase();
             payload[el.id] = val;

@@ -33,7 +33,7 @@
 
                 <div class="nav-group-label" style="margin-top: 8px;">行政資源</div>
                 <button id="nav-btn-accounting" class="nav-item" onclick="app.switchTab('accounting')"><i class="ph ph-currency-circle-dollar"></i> 公積金報帳</button>
-                <button id="nav-btn-members" class="nav-item active" onclick="app.switchTab('members')"><i class="ph ph-users"></i> 人員管理</button>
+                <button id="nav-btn-members" class="nav-item active" onclick="app.switchTab('members')"><i class="ph ph-users"></i> 實驗室成員</button>
                 <button id="nav-btn-employment" class="nav-item" onclick="app.switchTab('employment')"><i class="ph ph-graduation-cap"></i> 學生聘僱</button>
                 <button id="nav-btn-instruments" class="nav-item" onclick="app.switchTab('instruments')"><i class="ph ph-microscope"></i> 儀器設備</button>
             </nav>
@@ -47,6 +47,9 @@
                 </div>
                 <div id="auth-zone" class="auth-zone">
                     <div id="user-info" class="user-info" aria-live="polite"></div>
+                    <button id="btn-help" class="btn btn-secondary help-button" onclick="app.openHelpModal()" aria-label="開啟使用說明">
+                        <i class="ph ph-question" aria-hidden="true"></i><span class="help-button-label">使用說明</span>
+                    </button>
                     
                     <button id="btn-login" class="btn btn-primary" onclick="app.login()">
                         <i class="ph ph-google-logo" aria-hidden="true"></i> Google 登入
@@ -116,7 +119,7 @@
                                     <th style="width:120px;">區域</th>
                                     <th class="hide-mobile" style="width:150px;">廠商資訊</th>
                                     <th class="hide-mobile" style="width:120px;">負責人</th>
-                                    <th style="text-align:center; width:80px;">操作</th>
+                                    <th class="inst-actions-header" style="text-align:center; width:80px;">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="inst-tbody"></tbody>
@@ -241,14 +244,14 @@
                         </div>
                     </div>
                     <div class="table-container">
-                        <table>
+                        <table id="inv-table">
                             <thead>
                                 <tr>
                                     <th style="width:80px; text-align:center; cursor:pointer;" onclick="app.sortInventory('Status')">狀態 ⇅</th>
-                                    <th class="hide-mobile" onclick="app.sortInventory('Property_ID')" style="cursor:pointer; width:150px;">產編 ⇅</th>
-                                    <th onclick="app.sortInventory('Name')" style="cursor:pointer;">財物名稱 ⇅</th>
-                                    <th class="hide-mobile" style="width:120px; cursor:pointer;" onclick="app.sortInventory('Location')">實驗區域 ⇅</th>
-                                    <th class="hide-mobile" style="width:200px;">細項位置</th>
+                                    <th class="inventory-desktop-only" onclick="app.sortInventory('Property_ID')" style="cursor:pointer; width:150px;">產編 ⇅</th>
+                                    <th onclick="app.sortInventory('Name')" style="cursor:pointer;">財物</th>
+                                    <th class="inventory-desktop-only" style="width:120px; cursor:pointer;" onclick="app.sortInventory('Location')">實驗區域 ⇅</th>
+                                    <th class="inventory-desktop-only" style="width:200px;">細項位置</th>
                                     <th style="width:110px; text-align:center;">操作</th>
                                 </tr>
                             </thead>
@@ -316,7 +319,7 @@
                 <div class="mobile-drawer-group">
                     <div class="mobile-drawer-group-label"><i class="ph ph-briefcase" aria-hidden="true"></i> 行政資源</div>
                     <button onclick="app.switchTab('accounting'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-currency-circle-dollar"></i> 公積金報帳</button>
-                    <button onclick="app.switchTab('members'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-users"></i> 人員管理</button>
+                    <button onclick="app.switchTab('members'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-users"></i> 實驗室成員</button>
                     <button onclick="app.switchTab('employment'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-graduation-cap"></i> 學生聘僱</button>
                     <button onclick="app.switchTab('instruments'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-microscope"></i> 儀器設備</button>
                 </div>
@@ -331,8 +334,12 @@
                 <div class="form-group"><label for="Student_ID">學號</label><input type="text" id="Student_ID" placeholder="例如：R12943xxx"></div>
                 <div class="form-group"><label>中文姓名</label><input type="text" id="Name_Ch"></div>
                 
-                <div class="form-group"><label>英文姓氏 (Surname)</label><input type="text" id="Surname_En"></div>
-                <div class="form-group"><label>英文名字 (First Name)</label><input type="text" id="Name_En"></div>
+                <input type="hidden" id="Surname_En">
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label for="Name_En">英文姓名（全名）</label>
+                    <input type="text" id="Name_En" maxlength="100" autocomplete="name" placeholder="例如：Chin-Chuan Wu" aria-describedby="member-english-name-help">
+                    <small class="form-help" id="member-english-name-help">直接填完整英文姓名，不再拆成姓氏與名字。</small>
+                </div>
                 
                 <div class="form-group"><label>系所 (Department)</label><input type="text" id="Department"></div>
                 <div class="form-group"><label>學位 (Degree)</label>
@@ -343,7 +350,7 @@
                 <div class="form-group"><label>離校年月</label><input type="date" id="Leave_Date"></div>
                 
                 <div class="form-group"><label>手機號碼</label><input type="text" id="Phone"></div>
-                <div class="form-group"><label>電子信箱</label><input type="text" id="Email"></div>
+                <div class="form-group"><label>學校電子信箱</label><input type="email" id="Email" autocomplete="email"><small class="form-help">用於通知信，通常為學號@ntu.edu.tw。</small></div>
                 
                 <div class="form-group"><label>角色權限</label><select id="Role"><option value="User">一般成員</option><option value="Admin">管理員</option></select></div>
                 
@@ -361,6 +368,15 @@
                         <input type="text" id="Bind_Status" disabled style="background: var(--bg-page); color: var(--text-muted); font-weight: bold;">
                         <button type="button" id="btn-unbind" class="btn btn-danger hidden" onclick="app.unbindMember()"><i class="ph ph-link-break"></i> 解除綁定</button>
                     </div>
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label for="Google_Display_Name">Google 帳號顯示名稱</label>
+                    <input type="text" id="Google_Display_Name" readonly aria-describedby="google-identity-help" style="background: var(--bg-page); color: var(--text-muted);">
+                </div>
+                <div class="form-group" style="grid-column: 1 / -1;">
+                    <label for="Google_Email">Google 登入信箱</label>
+                    <input type="text" id="Google_Email" readonly aria-describedby="google-identity-help" style="background: var(--bg-page); color: var(--text-muted);">
+                    <small class="form-help" id="google-identity-help">由成員登入 Google 時自動記錄，與上方學校電子信箱無關；可選取複製但不能在此修改。</small>
                 </div>
                 <div class="form-group member-previous-ids-group" id="member-previous-ids-group" hidden>
                     <label>曾用學號</label>
@@ -502,8 +518,8 @@
                 <div class="form-group"><label>回報人</label><select id="Owner_ID"></select></div>
                 <div class="form-group"><label>實驗區域 (幫助過濾儀器)</label><select id="Log_Location_Filter" onchange="app.filterLogInstruments()"></select></div>
                 <div class="form-group"><label>發生故障儀器</label><select id="Log_Instrument_ID"></select></div>
-                <div class="form-group"><label>問題詳細描述</label><textarea id="Problem_Desc" rows="3"></textarea></div>
-                <div class="form-group"><label>結案解決方案</label><textarea id="Solution" rows="2"></textarea></div>
+                <div class="form-group"><label>問題詳細描述</label><textarea id="Problem_Desc" rows="3" maxlength="2000"></textarea></div>
+                <div class="form-group"><label>結案解決方案</label><textarea id="Solution" rows="2" maxlength="3000"></textarea></div>
                 <div class="form-group"><label>結案日期</label><input type="date" id="Date_Resolved"></div>
             </div>
             <div class="modal-footer">
@@ -598,7 +614,7 @@
                 <input type="hidden" id="Remark_Prop_ID">
                 <div class="form-group">
                     <label>具體存放位置說明</label>
-                    <textarea id="Remark_Text" rows="3" placeholder="例如：手套箱右側第三個層架..."></textarea>
+                    <textarea id="Remark_Text" rows="3" maxlength="500" placeholder="例如：手套箱右側第三個層架..."></textarea>
                 </div>
             </div>
             <div class="modal-footer">
@@ -709,12 +725,12 @@
     </div>
 
     <div id="help-modal" class="modal hidden">
-        <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-content help-dialog">
             <div class="modal-header">
-                <h3>頁面說明與操作指南</h3>
+                <h3 id="help-modal-title">GOODLAB 使用說明</h3>
                 <span class="close" onclick="app.closeModal('help-modal')">&times;</span>
             </div>
-            <div class="modal-body" id="help-modal-body" style="padding: 20px; line-height: 1.6;"></div>
+            <div class="modal-body help-modal-body" id="help-modal-body"></div>
             <div class="modal-footer">
                 <button onclick="app.closeModal('help-modal')" class="btn btn-primary">了解</button>
             </div>
@@ -758,9 +774,13 @@
                     嗨！偵測到您已登入 Google 帳號，但尚未與實驗室人員資料綁定。<br>
                     請輸入您的 <strong>學號</strong> 進行開通：
                 </p>
+                <div class="bind-account" aria-label="目前登入帳號">
+                    <i class="ph ph-google-logo" aria-hidden="true"></i>
+                    <span><small>目前登入帳號</small><strong id="bind-account-email">讀取中…</strong></span>
+                </div>
                 <div class="form-group">
                     <label>學號 (Student ID)</label>
-                    <input type="text" id="Bind_Input_ID" placeholder="例如：R12943xxx" style="text-transform: uppercase;">
+                    <input type="text" id="Bind_Input_ID" placeholder="例如：R12943xxx" autocomplete="username" autocapitalize="characters" style="text-transform: uppercase;">
                 </div>
             </div>
             <div class="modal-footer" style="justify-content: space-between;">

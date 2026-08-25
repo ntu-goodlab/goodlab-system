@@ -6,7 +6,7 @@
 import { db, doc, setDoc, updateDoc, deleteDoc, writeBatch, arrayUnion } from './firebase.js';
 import { LOCATIONS } from './constants.js';
 import { UI } from '../shared.js';
-import { generateId } from './utils.js';
+import { generateId, escapeHtml } from './utils.js';
 
 export const inventoryModule = {
 
@@ -359,8 +359,10 @@ export const inventoryModule = {
                         
                         let checkerName = '';
                         if (isChecked && row.Checked_By) {
-                            const name = this.getMemberName(row.Checked_By);
-                            checkerName = name === row.Checked_By ? '未知人員' : name;
+                            const checker = row.Checked_By_Student_ID
+                                ? this.data.members.find(member => member.Student_ID === row.Checked_By_Student_ID)
+                                : this.data.members.find(member => member.Google_UID === row.Checked_By);
+                            checkerName = checker?.Name_Ch || '已盤點';
                         }
                         
                         return `<div style="text-align:center; ${canEdit ? 'cursor: pointer;' : 'cursor: default; opacity: 0.8;'}" 
@@ -371,31 +373,37 @@ export const inventoryModule = {
                                 </div>`;
                     }
                 },
-                { width: '150px', render: row => `<strong style="font-family: monospace;">${row.Property_ID}</strong>` },
+                { width: '150px', className: 'inventory-desktop-only', render: row => `<strong style="font-family: monospace;">${escapeHtml(row.Property_ID)}</strong>` },
                 { 
                     render: row => {
                         const linkedInst = this.data.instruments.find(inst => inst.Linked_Property_IDs && inst.Linked_Property_IDs.includes(row.Property_ID));
-                        let html = `<div style="font-weight: 600; color: var(--text-main); line-height: 1.4;">${row.Name || '未命名'}</div>`;
-                        if (row.Brand || row.Model) html += `<div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 2px;">${row.Brand || ''} ${row.Model || ''}</div>`;
-                        if (linkedInst) html += `<div style="margin-top: 4px;"><span style="background: #f1f5f9; color: var(--secondary); font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-color); display: inline-flex; align-items: center; gap: 4px;"><i class="ph ph-link"></i> 已綁定至：${linkedInst.Name}</span></div>`;
+                        let html = `<div class="inventory-item-name">${escapeHtml(row.Name || '未命名')}</div>`;
+                        html += `<div class="inventory-mobile-meta"><span><i class="ph ph-tag" aria-hidden="true"></i>${escapeHtml(row.Property_ID)}</span><span><i class="ph ph-map-pin" aria-hidden="true"></i>${escapeHtml(row.Location || '未填區域')}</span></div>`;
+                        if (row.Brand || row.Model) html += `<div class="inventory-item-model">${escapeHtml(row.Brand || '')} ${escapeHtml(row.Model || '')}</div>`;
+                        if (linkedInst) html += `<div style="margin-top: 4px;"><span class="inventory-link-badge"><i class="ph ph-link" aria-hidden="true"></i> 已綁定至：${escapeHtml(linkedInst.Name)}</span></div>`;
+                        if (canEdit) html += `<div class="inventory-mobile-actions"><button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); app.openInvLocationModal('${row.Property_ID}')"><i class="ph ph-map-pin" aria-hidden="true"></i>區域</button><button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); app.openInvRemarkModal('${row.Property_ID}')"><i class="ph ph-note-pencil" aria-hidden="true"></i>細項位置</button></div>`;
                         return html;
                     }
                 },
                 { 
                     width: '120px', 
+                    className: 'inventory-desktop-only',
                     render: row => {
                         return `<div style="${canEdit ? 'cursor:pointer;' : 'cursor:default; opacity:0.6;'} display:flex; justify-content:space-between; align-items:center;" 
                                      onclick="${canEdit ? `event.stopPropagation(); app.openInvLocationModal('${row.Property_ID}')` : 'event.stopPropagation();'}" 
                                      title="${canEdit ? '點擊編輯區域' : '已鎖定'}">
-                                    <span>${row.Location || '-'}</span>
+                                    <span>${escapeHtml(row.Location || '-')}</span>
                                     ${canEdit ? '<i class="ph ph-pencil-simple" style="color: var(--primary); opacity: 0.3;"></i>' : ''}
                                 </div>`;
                     }
                 },
                 { 
                     width: '200px', 
+                    className: 'inventory-desktop-only',
                     render: row => {
-                        const text = row.Personal_Remark || `<span style="color:#aaa; font-style:italic;">${canEdit ? '點擊編輯...' : '-'}</span>`;
+                        const text = row.Personal_Remark
+                            ? escapeHtml(row.Personal_Remark)
+                            : `<span style="color:#aaa; font-style:italic;">${canEdit ? '點擊編輯...' : '-'}</span>`;
                         return `<div style="${canEdit ? 'cursor:pointer;' : 'cursor:default; opacity:0.6;'} display:flex; justify-content:space-between; align-items:center;" 
                                     onclick="${canEdit ? `event.stopPropagation(); app.openInvRemarkModal('${row.Property_ID}')` : 'event.stopPropagation();'}" 
                                     title="${canEdit ? '點擊編輯細項位置' : '已鎖定'}">
@@ -408,10 +416,10 @@ export const inventoryModule = {
                     width: '110px', align: 'center', 
                     render: row => {
                         const linkedInst = this.data.instruments.find(inst => inst.Linked_Property_IDs && inst.Linked_Property_IDs.includes(row.Property_ID));
-                        const infoBtn = `<button onclick="event.stopPropagation(); app.openInvDetailsModal('${row.Property_ID}')" class="btn btn-sm btn-secondary" title="查看詳細資料" style="padding: 4px 8px;"><i class="ph ph-info"></i></button>`;
-                        const linkBtn = linkedInst 
-                            ? `<button onclick="event.stopPropagation(); app.unlinkProperty('${row.Property_ID}', '${linkedInst.Instrument_ID}')" class="btn btn-sm btn-danger" title="解除綁定" ${canEdit ? '' : 'disabled'} style="padding: 4px 8px;"><i class="ph ph-link-break"></i></button>`
-                            : `<button onclick="event.stopPropagation(); app.openLinkModal('${row.Property_ID}')" class="btn btn-sm btn-primary" title="新增關聯" ${canEdit ? '' : 'disabled'} style="padding: 4px 8px;"><i class="ph ph-link"></i></button>`;
+                        const infoBtn = `<button type="button" aria-label="查看${escapeHtml(row.Name || row.Property_ID)}詳細資料" onclick="event.stopPropagation(); app.openInvDetailsModal('${row.Property_ID}')" class="btn btn-sm btn-secondary" title="查看詳細資料" style="padding: 4px 8px;"><i class="ph ph-info" aria-hidden="true"></i></button>`;
+                        const linkBtn = !isAdmin ? '' : linkedInst
+                            ? `<button type="button" onclick="event.stopPropagation(); app.unlinkProperty('${row.Property_ID}', '${linkedInst.Instrument_ID}')" class="btn btn-sm btn-danger" title="解除綁定" style="padding: 4px 8px;"><i class="ph ph-link-break" aria-hidden="true"></i></button>`
+                            : `<button type="button" onclick="event.stopPropagation(); app.openLinkModal('${row.Property_ID}')" class="btn btn-sm btn-primary" title="新增關聯" style="padding: 4px 8px;"><i class="ph ph-link" aria-hidden="true"></i></button>`;
 
                         return `<div style="display: flex; justify-content: center; gap: 6px;">${infoBtn}${linkBtn}</div>`;
                     }
@@ -431,8 +439,16 @@ export const inventoryModule = {
         }
         const newStatus = currentStatus === 'Checked' ? 'Pending' : 'Checked';
         const checkedBy = newStatus === 'Checked' ? this.currentUser.uid : null;
+        const checkedByStudentId = newStatus === 'Checked' ? (this.currentMember?.Student_ID || '') : null;
         try {
-            await updateDoc(doc(db, "inventory", propId), { Status: newStatus, Checked_By: checkedBy });
+            await updateDoc(doc(db, "inventory", propId), {
+                Status: newStatus,
+                Checked_By: checkedBy,
+                Checked_By_Student_ID: checkedByStudentId,
+                Updated_By_UID: this.currentUser?.uid || '',
+                Updated_By_Student_ID: this.currentMember?.Student_ID || '',
+                Updated_At: new Date().toISOString()
+            });
         } catch (e) { this.showNotification("狀態更新失敗: " + e.message, 'error'); }
     },
 
@@ -452,7 +468,12 @@ export const inventoryModule = {
         const propId = document.getElementById('Loc_Prop_ID').value;
         const newLoc = document.getElementById('Loc_Select_Value').value;
         try {
-            await updateDoc(doc(db, "inventory", propId), { Location: newLoc });
+            await updateDoc(doc(db, "inventory", propId), {
+                Location: newLoc,
+                Updated_By_UID: this.currentUser?.uid || '',
+                Updated_By_Student_ID: this.currentMember?.Student_ID || '',
+                Updated_At: new Date().toISOString()
+            });
             app.closeModal('inv-loc-modal');
             this.showNotification("區域已更新", 'success');
             this.renderInventory(); 
@@ -476,8 +497,17 @@ export const inventoryModule = {
         if (!this.checkInvEditPermission()) return;
         const propId = document.getElementById('Remark_Prop_ID').value;
         const text = document.getElementById('Remark_Text').value.trim();
+        if (text.length > 500) {
+            this.showNotification('細項位置請控制在 500 字以內', 'warning');
+            return;
+        }
         try {
-            await updateDoc(doc(db, "inventory", propId), { Personal_Remark: text });
+            await updateDoc(doc(db, "inventory", propId), {
+                Personal_Remark: text,
+                Updated_By_UID: this.currentUser?.uid || '',
+                Updated_By_Student_ID: this.currentMember?.Student_ID || '',
+                Updated_At: new Date().toISOString()
+            });
             app.closeModal('remark-modal');
             this.showNotification("備註已更新", 'success');
             this.renderInventory(); 
@@ -498,14 +528,14 @@ export const inventoryModule = {
         const valueStyle = "padding: 10px 8px; word-break: break-word; vertical-align: top;";
 
         tbody.innerHTML = `
-            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">財產編號</td><td style="${valueStyle} font-family: monospace; font-weight: bold;">${item.Property_ID}</td></tr>
-            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">財物名稱</td><td style="${valueStyle} font-weight: bold;">${item.Name || '-'}</td></tr>
-            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">廠牌 / 型式</td><td style="${valueStyle}">${item.Brand || '-'} / ${item.Model || '-'}</td></tr>
+            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">財產編號</td><td style="${valueStyle} font-family: monospace; font-weight: bold;">${escapeHtml(item.Property_ID)}</td></tr>
+            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">財物名稱</td><td style="${valueStyle} font-weight: bold;">${escapeHtml(item.Name || '-')}</td></tr>
+            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">廠牌 / 型式</td><td style="${valueStyle}">${escapeHtml(item.Brand || '-')} / ${escapeHtml(item.Model || '-')}</td></tr>
             <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">取得單價</td><td style="${valueStyle} color: var(--danger); font-weight: bold;">${formatMoney(item.Price)}</td></tr>
-            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">取得日期</td><td style="${valueStyle}">${item.Acquire_Date || '-'}</td></tr>
-            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">使用年限</td><td style="${valueStyle}">${item.Lifespan ? item.Lifespan + ' 年' : '-'}</td></tr>
-            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">實驗區域</td><td style="${valueStyle} color: var(--primary); font-weight: 600;">${item.Location || '-'}</td></tr>
-            <tr><td style="${labelStyle}">細項備註</td><td style="${valueStyle}">${item.Personal_Remark || '-'}</td></tr>
+            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">取得日期</td><td style="${valueStyle}">${escapeHtml(item.Acquire_Date || '-')}</td></tr>
+            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">使用年限</td><td style="${valueStyle}">${escapeHtml(item.Lifespan ? item.Lifespan + ' 年' : '-')}</td></tr>
+            <tr style="border-bottom: 1px solid var(--border-color);"><td style="${labelStyle}">實驗區域</td><td style="${valueStyle} color: var(--primary); font-weight: 600;">${escapeHtml(item.Location || '-')}</td></tr>
+            <tr><td style="${labelStyle}">細項備註</td><td style="${valueStyle}">${escapeHtml(item.Personal_Remark || '-')}</td></tr>
         `;
         UI.openModal({ modalId: 'inv-details-modal', title: '財產詳細資訊' });
     },

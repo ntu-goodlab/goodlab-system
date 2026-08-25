@@ -5,7 +5,7 @@
  */
 import { db, doc, setDoc } from './firebase.js';
 import { LOCATIONS } from './constants.js';
-import { generateId, formatDateForInput } from './utils.js';
+import { generateId, formatDateForInput, escapeHtml } from './utils.js';
 import { UI } from '../shared.js';
 
 export const instrumentsModule = {
@@ -34,6 +34,8 @@ export const instrumentsModule = {
         const term = document.getElementById('search-inst').value.toLowerCase();
         const locFilter = document.getElementById('filter-inst-location').value;
         const isAdmin = this.currentRole === 'Admin';
+        const actionHeader = document.querySelector('.inst-actions-header');
+        if (actionHeader) actionHeader.style.display = isAdmin ? '' : 'none';
 
         let filtered = this.data.instruments.filter(inst => {
             const matchText = (String(inst.Name || '') + String(inst.Instrument_ID || '')).toLowerCase().includes(term);
@@ -49,10 +51,7 @@ export const instrumentsModule = {
             return valA > valB ? dir : (valA < valB ? -dir : 0);
         });
 
-        UI.renderTable({
-            containerId: 'inst-tbody',
-            data: filtered,
-            columns: [
+        const columns = [
                 { 
                     width: '80px', align: 'center', 
                     render: row => {
@@ -63,22 +62,29 @@ export const instrumentsModule = {
                 },
                 { 
                     render: row => {
-                        let html = `<strong>${row.Name}</strong>`;
+                        let html = `<strong>${escapeHtml(row.Name)}</strong>`;
                         if (row.Linked_Property_IDs && row.Linked_Property_IDs.length > 0) {
                             html += `<div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">`;
                             row.Linked_Property_IDs.forEach(pid => {
-                                html += `<span style="background: #e2e8f0; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; color: #475569;"><i class="ph ph-tag"></i> ${pid}</span>`;
+                                html += `<span style="background: #e2e8f0; font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; color: #475569;"><i class="ph ph-tag"></i> ${escapeHtml(pid)}</span>`;
                             });
                             html += `</div>`;
                         }
                         return html;
                     }
                 },
-                { width: '120px', render: row => row.Location },
-                { width: '150px', className: 'hide-mobile', render: row => row.Vendor_Info || '-' },
-                { width: '120px', className: 'hide-mobile', render: row => this.getMemberName(row.Manager_ID) },
-                { width: '80px', align: 'center', render: row => `<button onclick="event.stopPropagation(); app.openInstModal('${row.Instrument_ID}')" class="btn btn-sm btn-secondary" ${isAdmin?'':'disabled'}><i class="ph ph-pencil-simple"></i></button>` }
-            ],
+                { width: '120px', render: row => escapeHtml(row.Location || '-') },
+                { width: '150px', className: 'hide-mobile', render: row => escapeHtml(row.Vendor_Info || '-') },
+                { width: '120px', className: 'hide-mobile', render: row => escapeHtml(this.getMemberName(row.Manager_ID)) }
+        ];
+        if (isAdmin) {
+            columns.push({ width: '80px', align: 'center', render: row => `<button type="button" aria-label="編輯${escapeHtml(row.Name)}" onclick="event.stopPropagation(); app.openInstModal('${escapeHtml(row.Instrument_ID)}')" class="btn btn-sm btn-secondary"><i class="ph ph-pencil-simple" aria-hidden="true"></i></button>` });
+        }
+
+        UI.renderTable({
+            containerId: 'inst-tbody',
+            data: filtered,
+            columns,
             emptyMessage: "查無符合的儀器資料",
             // 一般成員不會載入完整維修紀錄；只有 Admin 才能展開歷史，
             // 避免把「未載入」誤顯示成「沒有維修紀錄」。
@@ -131,9 +137,9 @@ export const instrumentsModule = {
                 logsHtml += `<tr style="cursor: pointer;" onclick="app.openLogModal('${log.Log_ID}', true)" title="點擊檢視詳細紀錄">
                     <td style="padding: 8px; border-bottom: 1px solid var(--border-color);">${dateFormatted}</td>
                     <td style="padding: 8px; border-bottom: 1px solid var(--border-color);">
-                        <div class="mobile-truncate" style="max-width: 150px;">${log.Problem_Desc}</div>
+                        <div class="mobile-truncate" style="max-width: 150px;">${escapeHtml(log.Problem_Desc)}</div>
                     </td>
-                    <td style="padding: 8px; border-bottom: 1px solid var(--border-color);" class="hide-mobile">${log.Solution || '-'}</td>
+                    <td style="padding: 8px; border-bottom: 1px solid var(--border-color);" class="hide-mobile">${escapeHtml(log.Solution || '-')}</td>
                     <td style="padding: 8px; border-bottom: 1px solid var(--border-color); text-align: center;">${statusIcon}</td>
                 </tr>`;
             });

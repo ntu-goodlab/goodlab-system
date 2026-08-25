@@ -4,8 +4,11 @@
  */
 import { auth, provider, db, doc, updateDoc, signInWithPopup, onAuthStateChanged, signOut } from './firebase.js';
 import { showNotification, closeModal } from './ui.js';
+import { escapeHtml } from './utils.js';
 
 export const authModule = {
+
+    _googleIdentitySyncUid: null,
 
     // === 登入 ===
     login: async function() {
@@ -29,6 +32,7 @@ export const authModule = {
     setupAuthListener: function() {
         onAuthStateChanged(auth, (user) => {
             const previousUid = this.currentUser ? this.currentUser.uid : null;
+            if (!user || previousUid !== user.uid) this._googleIdentitySyncUid = null;
             this.currentUser = user;
             this.currentMember = null;
             this.currentRole = 'Guest';
@@ -86,6 +90,19 @@ export const authModule = {
             if(userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${roleLabel}`;
             closeModal('bind-modal');
             this.syncRealtimeListeners(this.currentRole);
+            const googleEmail = String(this.currentUser.email || '').trim().toLowerCase();
+            const googleDisplayName = String(this.currentUser.displayName || '').trim();
+            const needsIdentitySync = googleEmail && (
+                memberData.Google_Email !== googleEmail
+                || (googleDisplayName && memberData.Google_Display_Name !== googleDisplayName)
+            );
+            if (needsIdentitySync && this._googleIdentitySyncUid !== this.currentUser.uid) {
+                this._googleIdentitySyncUid = this.currentUser.uid;
+                const googleIdentity = { Google_Email: googleEmail };
+                if (googleDisplayName) googleIdentity.Google_Display_Name = googleDisplayName;
+                updateDoc(doc(db, 'members', memberData.Student_ID), googleIdentity)
+                    .catch(error => console.warn('[GOODLAB] 無法同步 Google 帳號資料：', error.code || error.message));
+            }
         } else {
             // 已登入但未綁定學號 ➔ 視為 Guest
             this.currentRole = 'Guest';
@@ -95,6 +112,8 @@ export const authModule = {
             this.switchTab('welcome');
             // 彈出強制綁定視窗
             const bindModal = document.getElementById('bind-modal');
+            const bindAccountEmail = document.getElementById('bind-account-email');
+            if (bindAccountEmail) bindAccountEmail.textContent = this.currentUser.email || '無法取得信箱';
             if (bindModal) bindModal.classList.remove('hidden');
         }
         this.updateSidebarUI();
@@ -140,15 +159,28 @@ export const authModule = {
             return;
         }
 
+        const loginEmail = String(this.currentUser?.email || '').trim().toLowerCase();
+        const loginDisplayName = String(this.currentUser?.displayName || '').trim();
+        if (!loginEmail) {
+            this.showNotification("目前 Google 帳號沒有可記錄的信箱，請改用一般 Google 帳號登入。", "error");
+            return;
+        }
+
         try {
             const btn = document.getElementById('btn-submit-bind');
             btn.innerText = "綁定中...";
             btn.disabled = true;
 
-            // 寫入 Google UID 完成綁定
-            await updateDoc(doc(db, "members", member.Student_ID), { 
-                Google_UID: this.currentUser.uid 
-            });
+            // 先寫入 UID 完成認領，維持與既有 Firestore Rules 相容。
+            const memberRef = doc(db, "members", member.Student_ID);
+            await updateDoc(memberRef, { Google_UID: this.currentUser.uid });
+            try {
+                const googleIdentity = { Google_Email: loginEmail };
+                if (loginDisplayName) googleIdentity.Google_Display_Name = loginDisplayName;
+                await updateDoc(memberRef, googleIdentity);
+            } catch (identityError) {
+                console.warn('[GOODLAB] 綁定已完成，但 Google 帳號資料將在新規則發布後補登：', identityError.code || identityError.message);
+            }
 
             this.showNotification("綁定成功！權限已解鎖。", "success");
             closeModal('bind-modal');
@@ -166,6 +198,9 @@ export const authModule = {
     // === 側邊欄與手機 UI 動態控制 (Phase 5: 8 頁面) ===
     updateSidebarUI: function() {
         document.body.classList.toggle('guest-mode', this.currentRole === 'Guest');
+        document.querySelectorAll('.admin-only').forEach(element => {
+            element.style.display = this.currentRole === 'Admin' ? '' : 'none';
+        });
         // 定義所有導覽按鈕 [桌面版ID, 手機版selector]
         const navIds = ['overview', 'logs', 'routine', 'duty', 'inventory', 'accounting', 'members', 'employment', 'instruments'];
         
@@ -188,12 +223,12 @@ export const authModule = {
                 arr.forEach(el => { if(el) el.style.display = 'flex'; }); 
             });
         } else if (this.currentRole === 'User') {
-            // User：維修完整紀錄屬 Admin；一般成員由總覽直接回報問題。
+            // User：維修紀錄與問題回報目前都由 Admin 管理。
             ['overview', 'instruments', 'inventory', 'duty', 'members'].forEach(id => {
                 navMap[id].forEach(el => { if(el) el.style.display = 'flex'; });
             });
         }
-        // Guest：什麼都不做，畫面上只會剩下預設顯示的「人員管理」
+        // Guest：不顯示任何資料頁導覽。
 
         // 手機版「更多」按鈕永遠可見（非 Guest 時）
         const moreBtn = document.getElementById('mobile-more-btn');
@@ -209,9 +244,32 @@ export const authModule = {
         if (!activePage) return;
         
         const tabName = activePage.id.replace('page-', '');
-        const content = this.helpDocs[tabName] || "<p>目前頁面暫無說明。</p>";
-        
-        document.getElementById('help-modal-body').innerHTML = content;
+        const title = document.getElementById('help-modal-title');
+        const body = document.getElementById('help-modal-body');
+        if (!body) return;
+
+        const loginGuide = `<section class="help-current-page">
+            <h4>第一次登入與帳號綁定</h4>
+            <ol><li>點右上角「Google 登入」。</li><li>選擇自己要用來登入 GOODLAB 的 Google 帳號。</li><li>輸入 Admin 已建立、且尚未被認領的學號並確認綁定。</li></ol>
+            <p>Google 登入信箱與學校通知信箱是兩筆不同資料。若學號不在名單或已被綁定，請聯絡 Admin。</p>
+        </section>`;
+        const commonQuestions = `<section class="help-section">
+            <h4>常見問題</h4>
+            <ul><li><strong>看不到編輯按鈕：</strong>該功能可能僅限 Admin，或產編盤點目前未開放。</li><li><strong>值日清單不能勾：</strong>只有本週值日生及 Admin 可以修改。</li><li><strong>資料沒有更新：</strong>先重新整理；仍有問題再把頁面與錯誤訊息告訴 Admin。</li></ul>
+        </section>`;
+
+        if (this.currentRole === 'User') {
+            const pageContent = this.userHelpDocs?.[tabName] || '<p>本頁目前沒有額外操作說明。</p>';
+            const pageNames = { overview: '實驗室總覽', duty: '值日生工作', inventory: '產編清點', instruments: '儀器設備', members: '實驗室成員' };
+            if (title) title.textContent = 'GOODLAB 使用說明';
+            body.innerHTML = `<section class="help-current-page"><span class="help-eyebrow">目前頁面</span><h4>${escapeHtml(pageNames[tabName] || 'GOODLAB')}</h4>${pageContent}</section>${commonQuestions}`;
+        } else if (this.currentRole === 'Admin') {
+            if (title) title.textContent = 'Admin 頁面說明';
+            body.innerHTML = this.helpDocs[tabName] || '<p>本頁目前沒有額外操作說明。</p>';
+        } else {
+            if (title) title.textContent = 'GOODLAB 登入說明';
+            body.innerHTML = loginGuide;
+        }
         
         // 這裡因為沒有填寫表單的需求，直接把 hidden 拿掉即可
         document.getElementById('help-modal').classList.remove('hidden');
