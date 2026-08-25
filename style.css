@@ -571,6 +571,9 @@ textarea { resize: vertical; min-height: 80px; }
 
 /* --- 4. RWD 手機版導覽 (Mobile Nav) --- */
 .mobile-nav { display: none; }
+/* 權限尚未載入前先隱藏各入口，避免短暫顯示不屬於該帳號的功能。 */
+.mobile-nav-item[data-nav-tab],
+#mobile-more-btn { display: none; }
 @media (max-width: 1024px) {
     .sidebar { display: none; }
     .main-content { margin-left: 0; padding-bottom: 80px; }

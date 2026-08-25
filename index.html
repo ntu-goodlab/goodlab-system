@@ -294,12 +294,17 @@
             </div>
         </main>
 
-        <!-- 手機底部導覽列：4 個核心目的地 + 更多 -->
+        <!-- 手機底部導覽列：依權限自動顯示，超過 5 個時才使用「更多」 -->
         <nav class="mobile-nav" aria-label="主要功能">
-            <button class="mobile-nav-item" onclick="app.switchTab('overview')"><i class="ph ph-squares-four" aria-hidden="true"></i> <span>總覽</span></button>
-            <button class="mobile-nav-item" onclick="app.switchTab('instruments')"><i class="ph ph-microscope" aria-hidden="true"></i> <span>儀器</span></button>
-            <button class="mobile-nav-item" onclick="app.switchTab('duty')"><i class="ph ph-broom" aria-hidden="true"></i> <span>值日</span></button>
-            <button class="mobile-nav-item" onclick="app.switchTab('inventory')"><i class="ph ph-list-checks" aria-hidden="true"></i> <span>產編</span></button>
+            <button class="mobile-nav-item" data-nav-tab="overview" onclick="app.switchTab('overview')"><i class="ph ph-squares-four" aria-hidden="true"></i> <span>總覽</span></button>
+            <button class="mobile-nav-item" data-nav-tab="instruments" onclick="app.switchTab('instruments')"><i class="ph ph-microscope" aria-hidden="true"></i> <span>儀器</span></button>
+            <button class="mobile-nav-item" data-nav-tab="duty" onclick="app.switchTab('duty')"><i class="ph ph-broom" aria-hidden="true"></i> <span>值日</span></button>
+            <button class="mobile-nav-item" data-nav-tab="inventory" onclick="app.switchTab('inventory')"><i class="ph ph-list-checks" aria-hidden="true"></i> <span>產編</span></button>
+            <button class="mobile-nav-item" data-nav-tab="members" onclick="app.switchTab('members')"><i class="ph ph-users" aria-hidden="true"></i> <span>成員</span></button>
+            <button class="mobile-nav-item" data-nav-tab="logs" onclick="app.switchTab('logs')"><i class="ph ph-wrench" aria-hidden="true"></i> <span>維修</span></button>
+            <button class="mobile-nav-item" data-nav-tab="routine" onclick="app.switchTab('routine')"><i class="ph ph-calendar-dots" aria-hidden="true"></i> <span>行事</span></button>
+            <button class="mobile-nav-item" data-nav-tab="accounting" onclick="app.switchTab('accounting')"><i class="ph ph-currency-circle-dollar" aria-hidden="true"></i> <span>帳務</span></button>
+            <button class="mobile-nav-item" data-nav-tab="employment" onclick="app.switchTab('employment')"><i class="ph ph-graduation-cap" aria-hidden="true"></i> <span>聘僱</span></button>
             <button class="mobile-nav-item" id="mobile-more-btn" onclick="app.toggleMobileMore()" aria-expanded="false" aria-controls="mobile-more-drawer"><i class="ph ph-dots-three-outline" aria-hidden="true"></i> <span>更多</span></button>
         </nav>
 
@@ -307,21 +312,21 @@
         <div id="mobile-more-drawer" class="mobile-more-drawer hidden">
             <div class="mobile-drawer-backdrop" onclick="app.toggleMobileMore()"></div>
             <div class="mobile-drawer-content">
-                <div class="mobile-drawer-header">所有功能</div>
+                <div class="mobile-drawer-header">其他功能</div>
                 <div class="mobile-drawer-group">
                     <div class="mobile-drawer-group-label"><i class="ph ph-clipboard-text" aria-hidden="true"></i> 日常管理</div>
-                    <button onclick="app.switchTab('overview'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-squares-four" aria-hidden="true"></i> 總覽</button>
-                    <button onclick="app.switchTab('logs'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-wrench"></i> 維修紀錄</button>
-                    <button onclick="app.switchTab('routine'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-calendar-dots" aria-hidden="true"></i> 實驗室行事</button>
-                    <button onclick="app.switchTab('duty'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-broom"></i> 值日生</button>
-                    <button onclick="app.switchTab('inventory'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-list-checks"></i> 產編清點</button>
+                    <button data-nav-tab="overview" onclick="app.switchTab('overview'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-squares-four" aria-hidden="true"></i> 總覽</button>
+                    <button data-nav-tab="logs" onclick="app.switchTab('logs'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-wrench"></i> 維修紀錄</button>
+                    <button data-nav-tab="routine" onclick="app.switchTab('routine'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-calendar-dots" aria-hidden="true"></i> 實驗室行事</button>
+                    <button data-nav-tab="duty" onclick="app.switchTab('duty'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-broom"></i> 值日生</button>
+                    <button data-nav-tab="inventory" onclick="app.switchTab('inventory'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-list-checks"></i> 產編清點</button>
                 </div>
                 <div class="mobile-drawer-group">
                     <div class="mobile-drawer-group-label"><i class="ph ph-briefcase" aria-hidden="true"></i> 行政資源</div>
-                    <button onclick="app.switchTab('accounting'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-currency-circle-dollar"></i> 公積金報帳</button>
-                    <button onclick="app.switchTab('members'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-users"></i> 實驗室成員</button>
-                    <button onclick="app.switchTab('employment'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-graduation-cap"></i> 學生聘僱</button>
-                    <button onclick="app.switchTab('instruments'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-microscope"></i> 儀器設備</button>
+                    <button data-nav-tab="accounting" onclick="app.switchTab('accounting'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-currency-circle-dollar"></i> 公積金報帳</button>
+                    <button data-nav-tab="members" onclick="app.switchTab('members'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-users"></i> 實驗室成員</button>
+                    <button data-nav-tab="employment" onclick="app.switchTab('employment'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-graduation-cap"></i> 學生聘僱</button>
+                    <button data-nav-tab="instruments" onclick="app.switchTab('instruments'); app.toggleMobileMore()" class="mobile-drawer-item"><i class="ph ph-microscope"></i> 儀器設備</button>
                 </div>
             </div>
         </div>

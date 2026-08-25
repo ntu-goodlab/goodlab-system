@@ -5,6 +5,7 @@
 import { auth, provider, db, doc, updateDoc, signInWithPopup, onAuthStateChanged, signOut } from './firebase.js';
 import { showNotification, closeModal } from './ui.js';
 import { escapeHtml } from './utils.js';
+import { getMobileNavigationLayout } from './mobile-navigation.js';
 
 export const authModule = {
 
@@ -195,45 +196,48 @@ export const authModule = {
         }
     },
 
-    // === 側邊欄與手機 UI 動態控制 (Phase 5: 8 頁面) ===
+    // === 側邊欄與手機 UI 動態控制 ===
     updateSidebarUI: function() {
         document.body.classList.toggle('guest-mode', this.currentRole === 'Guest');
         document.querySelectorAll('.admin-only').forEach(element => {
             element.style.display = this.currentRole === 'Admin' ? '' : 'none';
         });
-        // 定義所有導覽按鈕 [桌面版ID, 手機版selector]
+
         const navIds = ['overview', 'logs', 'routine', 'duty', 'inventory', 'accounting', 'members', 'employment', 'instruments'];
-        
-        const navMap = {};
+        const allowedIds = this.getAllowedTabs().filter(id => navIds.includes(id));
+        const allowedSet = new Set(allowedIds);
+
         navIds.forEach(id => {
-            navMap[id] = [
-                document.getElementById('nav-btn-' + id),
-                ...document.querySelectorAll('.mobile-nav-item[onclick*="' + id + '"], .mobile-drawer-item[onclick*="' + id + '"]')
-            ];
+            const desktopButton = document.getElementById('nav-btn-' + id);
+            if (desktopButton) desktopButton.style.display = allowedSet.has(id) ? 'flex' : 'none';
         });
 
-        // 預設：全部物理隱藏 (display: none)
-        Object.values(navMap).forEach(arr => { 
-            arr.forEach(el => { if(el) el.style.display = 'none'; }); 
+        // 現有四個常用入口維持優先；五個以內全部直接顯示。
+        const mobileLayout = getMobileNavigationLayout(allowedIds, {
+            priorityIds: ['overview', 'instruments', 'duty', 'inventory']
+        });
+        const directSet = new Set(mobileLayout.directIds);
+        const overflowSet = new Set(mobileLayout.overflowIds);
+
+        document.querySelectorAll('.mobile-nav-item[data-nav-tab]').forEach(button => {
+            button.style.display = directSet.has(button.dataset.navTab) ? 'flex' : 'none';
+        });
+        document.querySelectorAll('.mobile-drawer-item[data-nav-tab]').forEach(button => {
+            button.style.display = overflowSet.has(button.dataset.navTab) ? 'flex' : 'none';
+        });
+        document.querySelectorAll('.mobile-drawer-group').forEach(group => {
+            const hasVisibleItem = [...group.querySelectorAll('.mobile-drawer-item[data-nav-tab]')]
+                .some(button => overflowSet.has(button.dataset.navTab));
+            group.classList.toggle('hidden', !hasVisibleItem);
         });
 
-        if (this.currentRole === 'Admin') {
-            // Admin：全部解鎖
-            Object.values(navMap).forEach(arr => { 
-                arr.forEach(el => { if(el) el.style.display = 'flex'; }); 
-            });
-        } else if (this.currentRole === 'User') {
-            // User：維修紀錄與問題回報目前都由 Admin 管理。
-            ['overview', 'instruments', 'inventory', 'duty', 'members'].forEach(id => {
-                navMap[id].forEach(el => { if(el) el.style.display = 'flex'; });
-            });
-        }
-        // Guest：不顯示任何資料頁導覽。
-
-        // 手機版「更多」按鈕永遠可見（非 Guest 時）
         const moreBtn = document.getElementById('mobile-more-btn');
         if (moreBtn) {
-            moreBtn.style.display = (this.currentRole !== 'Guest') ? 'flex' : 'none';
+            moreBtn.style.display = mobileLayout.showMore ? 'flex' : 'none';
+            moreBtn.setAttribute('aria-expanded', 'false');
+        }
+        if (!mobileLayout.showMore) {
+            document.getElementById('mobile-more-drawer')?.classList.add('hidden');
         }
     },
 
