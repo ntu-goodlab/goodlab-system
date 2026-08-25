@@ -316,9 +316,6 @@ textarea { resize: vertical; min-height: 80px; }
 .welcome-feature div { display: flex; flex-direction: column; gap: 2px; }
 .welcome-feature span { color: var(--text-muted); font-size: 0.9rem; }
 
-.page-heading { display: flex; align-items: end; justify-content: space-between; margin-bottom: 24px; }
-.page-heading h2 { margin-top: 4px; font-size: clamp(1.6rem, 3vw, 2.2rem); }
-.page-heading p { margin-top: 6px; color: var(--text-muted); }
 .overview-content { display: grid; gap: 20px; }
 .overview-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .overview-card {
@@ -712,7 +709,6 @@ html, body {
     .welcome-copy p { font-size: 1rem; }
     .welcome-copy .btn { width: 100%; }
 
-    .page-heading { align-items: flex-start; }
     .overview-kpis { grid-template-columns: 1fr 1fr; gap: 10px; }
     .overview-card { min-height: 154px; padding: 14px; gap: 12px; }
     .overview-card strong { font-size: 1.7rem; }

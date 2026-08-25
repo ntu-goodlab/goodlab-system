@@ -494,16 +494,11 @@ export const dashboardModule = {
 
     renderOverview: function() {
         const container = document.getElementById('overview-content');
-        const greeting = document.getElementById('overview-greeting');
         if (!container || !this.currentMember) return;
 
         const isAdmin = this.currentRole === 'Admin';
         const dutyData = this._getOverviewDutyData();
         const tasks = this._getOverviewTasks(dutyData);
-
-        greeting.textContent = isAdmin
-            ? `${this.currentMember.Name_Ch}，以下是截至現在的實驗室狀態。`
-            : `${this.currentMember.Name_Ch}，這裡整理了本週資訊與需要你處理的事項。`;
 
         if (isAdmin) {
             const accounting = typeof this.getAccountingSummary === 'function' ? this.getAccountingSummary() : null;

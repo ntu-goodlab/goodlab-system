@@ -207,7 +207,6 @@ const app = {
 
     renderOverview: function() {
         const container = document.getElementById('overview-content');
-        const greeting = document.getElementById('overview-greeting');
         if (!container || !this.currentMember) return;
 
         const openLogs = this.data.logs.filter(item => item.Status === 'Open').length;
@@ -243,7 +242,6 @@ const app = {
             </button>`;
         }).join('');
 
-        greeting.textContent = `${this.currentMember.Name_Ch}，以下是目前資料摘要。`;
         container.innerHTML = `
             <div class="overview-kpis">
                 ${isAdmin ? `<button class="overview-card overview-card-action" onclick="app.switchTab('accounting')">

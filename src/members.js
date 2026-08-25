@@ -12,25 +12,12 @@ import {
     normalizeStudentId,
     validateMemberIdMigration
 } from './member-id-migration.js';
-
-const MEMBER_GROUPS = [
-    { key: 'phd', label: '博士班', className: 'is-phd' },
-    { key: 'master', label: '碩士班', className: 'is-master' },
-    { key: 'other', label: '其他在學成員', className: 'is-other' },
-    { key: 'alumni', label: '已畢業／離校', className: 'is-alumni' }
-];
+import { MEMBER_GROUPS, memberGroupKey, compareMembersForDirectory } from './member-directory.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, character => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
     })[character]);
-}
-
-function memberGroupKey(member) {
-    if (member.Status === 'Alumni') return 'alumni';
-    if (member.Degree === 'PhD') return 'phd';
-    if (member.Degree === 'Master') return 'master';
-    return 'other';
 }
 
 function memberDegreeLabel(member) {
@@ -49,36 +36,6 @@ function memberEnglishName(member) {
     return normalizedName.split(/\s+/).includes(normalizedSurname)
         ? givenOrFullName
         : [givenOrFullName, legacySurname].filter(Boolean).join(' ');
-}
-
-function studentIdSortParts(value) {
-    const normalized = String(value || '').trim().toUpperCase();
-    const match = /^([A-Z]+)(\d{2,3})/.exec(normalized);
-    const rawYear = match?.[2] || '';
-    const parsedYear = Number(rawYear);
-    return {
-        normalized,
-        admissionYear: Number.isFinite(parsedYear)
-            ? (rawYear.length === 2 ? parsedYear + 100 : parsedYear)
-            : Number.POSITIVE_INFINITY
-    };
-}
-
-function compareMembersForDirectory(a, b) {
-    const groupRank = Object.fromEntries(MEMBER_GROUPS.map((group, index) => [group.key, index]));
-    const groupDifference = groupRank[memberGroupKey(a)] - groupRank[memberGroupKey(b)];
-    if (groupDifference) return groupDifference;
-
-    if (memberGroupKey(a) === 'alumni') {
-        const alumniDegreeRank = { PhD: 0, Master: 1, Bachelor: 2 };
-        const degreeDifference = (alumniDegreeRank[a.Degree] ?? 3) - (alumniDegreeRank[b.Degree] ?? 3);
-        if (degreeDifference) return degreeDifference;
-    }
-
-    const left = studentIdSortParts(a.Student_ID);
-    const right = studentIdSortParts(b.Student_ID);
-    return left.admissionYear - right.admissionYear
-        || left.normalized.localeCompare(right.normalized, 'en', { numeric: true, sensitivity: 'base' });
 }
 
 const MEMBER_MIGRATION_WRITE_LIMIT = 450;
