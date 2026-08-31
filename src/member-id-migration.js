@@ -47,7 +47,7 @@ const MEMBER_REFERENCE_DEFINITIONS = [
 const STUDENT_ID_PATTERN = /^[a-z][a-z0-9]{5,19}$/;
 
 export function normalizeStudentId(value) {
-    return String(value ?? '').trim().toLowerCase();
+    return String(value ?? '').normalize('NFKC').trim().toLowerCase();
 }
 
 function sameStudentId(value, targetId) {

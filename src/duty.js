@@ -10,6 +10,7 @@
  */
 import { db, doc, setDoc, updateDoc, writeBatch } from './firebase.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
+import { getDutyRoster, getDutyWeekId } from './duty-schedule.js';
 
 const DUTY_NOTE_MAX_LENGTH = 1000;
 const escapeDutyHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -23,18 +24,12 @@ export const dutyModule = {
 
     // === 取得當週 ID (ISO Week 的週一日期字串，e.g. "2026-06-09") ===
     _getDutyWeekId: function(date) {
-        const d = new Date(date || Date.now());
-        const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
-        const monday = new Date(d.setDate(diff));
-        return monday.toISOString().split('T')[0];
+        return getDutyWeekId(date || Date.now());
     },
 
     // === 取得值日生候選名單 (碩班、非Admin、在學中) ===
     _getDutyRoster: function() {
-        return this.data.members
-            .filter(m => m.Degree === 'Master' && m.Role !== 'Admin' && m.Status === 'Active')
-            .sort((a, b) => a.Student_ID.localeCompare(b.Student_ID));
+        return getDutyRoster(this.data.members);
     },
 
     // scheduled_to 決定後續輪值；assigned_to 是本週實際執行者（可能為代班者）。
@@ -836,10 +831,10 @@ export const dutyModule = {
 
         try {
             const batch = writeBatch(db);
+            const alignedRecord = this._buildDutyRecordPayload(weekId, selectedId, 'admin');
             batch.set(
                 doc(db, 'duty_records', weekId),
-                this._buildDutyRecordPayload(weekId, selectedId, 'admin'),
-                { merge: true }
+                alignedRecord
             );
             if (currentRecord?.carried_from) {
                 batch.update(doc(db, 'duty_records', currentRecord.carried_from), {
@@ -850,7 +845,13 @@ export const dutyModule = {
                 });
             }
             await batch.commit();
+            const recordIndex = this.data.duty_records.findIndex(record => record._id === weekId);
+            const localRecord = { _id: weekId, ...alignedRecord };
+            if (recordIndex >= 0) this.data.duty_records[recordIndex] = localRecord;
+            else this.data.duty_records.push(localRecord);
             this.closeModal('current-duty-alignment-modal');
+            this.renderDuty();
+            this.renderOverview();
             this.showNotification(`輪值已對齊：本週 ${selectedMember.Name_Ch}${nextMember ? `；完成後下一位為 ${nextMember.Name_Ch}` : ''}`, 'success');
         } catch (error) {
             if (errorElement) errorElement.textContent = '對齊失敗：' + error.message;

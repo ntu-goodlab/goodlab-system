@@ -916,10 +916,19 @@ function getDutyRoster_(members) {
   return members
     .filter(isDutyRosterMember_)
     .sort(function (a, b) {
+      const enrollmentDifference = dutyEnrollmentTime_(a) - dutyEnrollmentTime_(b);
+      if (enrollmentDifference) return enrollmentDifference;
       return String(a.Student_ID).localeCompare(
         String(b.Student_ID), 'en', { numeric: true, sensitivity: 'base' }
       );
     });
+}
+
+function dutyEnrollmentTime_(member) {
+  const value = member && member.Enrollment_Date;
+  if (!value) return 8640000000000000;
+  const timestamp = value instanceof Date ? value.getTime() : Date.parse(String(value));
+  return Number.isFinite(timestamp) ? timestamp : 8640000000000000;
 }
 
 function dutyCompletionPropertyKey_(weekId) {

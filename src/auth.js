@@ -6,6 +6,7 @@ import { auth, provider, db, doc, updateDoc, signInWithPopup, onAuthStateChanged
 import { showNotification, closeModal } from './ui.js';
 import { escapeHtml } from './utils.js';
 import { getMobileNavigationLayout } from './mobile-navigation.js';
+import { normalizeStudentId } from './member-id-migration.js';
 
 export const authModule = {
 
@@ -140,17 +141,17 @@ export const authModule = {
 
     // === 自訂綁定視窗邏輯：送出綁定 ===
     submitBinding: async function() {
-        const studentId = document.getElementById('Bind_Input_ID').value.trim().toUpperCase();
+        const studentId = normalizeStudentId(document.getElementById('Bind_Input_ID').value);
         if (!studentId) {
             this.showNotification("請輸入學號！", "warning");
             return;
         }
 
         // 從資料庫找這個學號
-        const member = this.data.members.find(m => m.Student_ID.toUpperCase() === studentId);
+        const member = this.data.members.find(m => normalizeStudentId(m?.Student_ID) === studentId);
 
         if (!member) {
-            this.showNotification("此學號不在系統名單內，請聯絡管理員建檔。", "error");
+            this.showNotification("找不到此學號。請 Admin 確認成員資料內的 Student_ID 欄位與輸入學號一致，再重新整理後綁定。", "error", 8000);
             return;
         }
 

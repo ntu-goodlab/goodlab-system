@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     buildMigratedMember,
     createMemberIdMigrationPlan,
+    normalizeStudentId,
     validateMemberIdMigration
 } from '../src/member-id-migration.js';
 
@@ -25,6 +26,11 @@ const members = [
         Previous_Student_IDs: ['r10800001']
     }
 ];
+
+test('學號比對忽略大小寫並將全形英數正規化', () => {
+    assert.equal(normalizeStudentId(' Ｒ１４Ｋ４３０５０ '), 'r14k43050');
+    assert.equal(normalizeStudentId('r14K43050'), 'r14k43050');
+});
 
 test('拒絕目前學號或他人曾用學號重複', () => {
     assert.equal(
