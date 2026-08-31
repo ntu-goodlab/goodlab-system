@@ -8,7 +8,7 @@
  *                            cleaning: {sweep: false, ...}, supplies: {acetone: false, ...},
  *                            submitted: false, submitted_at: null }
  */
-import { db, doc, setDoc, updateDoc, writeBatch, runTransaction } from './firebase.js';
+import { db, doc, setDoc, updateDoc, runTransaction } from './firebase.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
 import { canAutoCarryOver, getDutyRoster, getDutyWeekId, hasDutyProgress } from './duty-schedule.js';
 
@@ -830,21 +830,22 @@ export const dutyModule = {
         if (errorElement) errorElement.textContent = '';
 
         try {
-            const batch = writeBatch(db);
             const alignedRecord = this._buildDutyRecordPayload(weekId, selectedId, 'admin');
-            batch.set(
-                doc(db, 'duty_records', weekId),
-                alignedRecord
-            );
+            // Admin 對齊是本週的最高優先權操作，必須先獨立完成。
+            // 不可因清理上週紀錄失敗而連帶回滾本週指定。
+            await setDoc(doc(db, 'duty_records', weekId), alignedRecord);
+
             if (currentRecord?.carried_from) {
-                batch.update(doc(db, 'duty_records', currentRecord.carried_from), {
+                updateDoc(doc(db, 'duty_records', currentRecord.carried_from), {
                     status: 'missed_admin_override',
                     carried_over_to: null,
                     carryover_overridden_at: new Date().toISOString(),
                     updated_at: new Date().toISOString()
+                }).catch(error => {
+                    // 上週註記只是歷史整理，不影響已完成的本週強制指定。
+                    console.warn('[GOODLAB] 本週已對齊，但無法補記上週覆寫狀態：', error.code || error.message);
                 });
             }
-            await batch.commit();
             const recordIndex = this.data.duty_records.findIndex(record => record._id === weekId);
             const localRecord = { _id: weekId, ...alignedRecord };
             if (recordIndex >= 0) this.data.duty_records[recordIndex] = localRecord;
