@@ -1,7 +1,7 @@
 /**
  * GOODLAB — 值日生模組 (Phase 5)
  * 
- * 動態輪值（碩班非Admin）、代班雙向確認、清潔+耗材 checklist。
+ * 動態輪值（碩班非Admin）、清潔+耗材 checklist。
  * 資料模型：
  *   duty_records/{weekId}: { week_start, scheduled_to, assigned_to, assignment_source,
  *                            carried_from, carryover_count, status, substitute_pending, substitute_from,
@@ -10,7 +10,7 @@
  */
 import { db, doc, setDoc, updateDoc, runTransaction } from './firebase.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
-import { canAutoCarryOver, getDutyRoster, getDutyWeekId, hasDutyProgress } from './duty-schedule.js';
+import { canAutoCarryOver, canInitializeDutyWeek, getDutyRoster, getDutyWeekId, hasDutyProgress } from './duty-schedule.js';
 
 const DUTY_NOTE_MAX_LENGTH = 1000;
 const escapeDutyHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -21,6 +21,10 @@ export const dutyModule = {
 
     _dutyCarryoverSyncWeek: null,
     _dutyRosterSyncWeek: null,
+
+    _dutyRecordsAreLoaded: function() {
+        return canInitializeDutyWeek(this.realtimeLoadState?.duty_records, false);
+    },
 
     // === 取得當週 ID (ISO Week 的週一日期字串，e.g. "2026-06-09") ===
     _getDutyWeekId: function(date) {
@@ -204,21 +208,31 @@ export const dutyModule = {
     // === 確保本週紀錄存在於 Firebase ===
     _ensureWeekRecord: async function(assignedTo) {
         const weekId = this._getDutyWeekId();
-        const existing = this.data.duty_records.find(r => r._id === weekId);
-        if (existing) return existing;
+        if (!this._dutyRecordsAreLoaded()) {
+            throw new Error('值日資料仍在載入，已停止建立空白清單');
+        }
         if (this.currentRole !== 'Admin' && this.currentMember?.Student_ID !== assignedTo) {
             throw new Error('只有本週值日生或 Admin 可以建立工作清單');
         }
 
         const newRecord = this._buildDutyRecordPayload(weekId, assignedTo, 'auto');
-
-        await setDoc(doc(db, 'duty_records', weekId), newRecord);
-        return newRecord;
+        const recordRef = doc(db, 'duty_records', weekId);
+        return runTransaction(db, async transaction => {
+            const snapshot = await transaction.get(recordRef);
+            // 初始載入與即時監聽可能交錯；既有資料永遠具有優先權，
+            // 尤其不可覆蓋 Admin 對齊、已提交紀錄或已勾選的清單。
+            if (!canInitializeDutyWeek(this.realtimeLoadState?.duty_records, snapshot.exists())) {
+                return snapshot.exists() ? snapshot.data() : null;
+            }
+            transaction.set(recordRef, newRecord);
+            return newRecord;
+        });
     },
 
     _ensureCarryoverWeek: async function(previousRecord) {
         const weekId = this._getDutyWeekId();
         if (!previousRecord || this._dutyCarryoverSyncWeek === weekId) return;
+        if (!this._dutyRecordsAreLoaded()) return;
 
         this._dutyCarryoverSyncWeek = weekId;
         const roster = this._getDutyRoster();
@@ -294,12 +308,14 @@ export const dutyModule = {
         const nextWeekDate = new Date();
         nextWeekDate.setDate(nextWeekDate.getDate() + 7);
         const nextWeekId = this._getDutyWeekId(nextWeekDate);
-        const existing = this.data.duty_records.find(record => record._id === nextWeekId);
-        if (existing) return existing;
-
         const payload = this._buildDutyRecordPayload(nextWeekId, nextPerson.Student_ID, 'auto');
-        await setDoc(doc(db, 'duty_records', nextWeekId), payload);
-        return payload;
+        const recordRef = doc(db, 'duty_records', nextWeekId);
+        return runTransaction(db, async transaction => {
+            const snapshot = await transaction.get(recordRef);
+            if (snapshot.exists()) return snapshot.data();
+            transaction.set(recordRef, payload);
+            return payload;
+        });
     },
 
     // === 主渲染 ===
@@ -311,6 +327,18 @@ export const dutyModule = {
             container.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted);">
                 <i class="ph-fill ph-lock-key" style="font-size:3rem; margin-bottom:10px; display:block;"></i>
                 請先登入並完成綁定</div>`;
+            return;
+        }
+
+        // 切頁與登入後的首次 render 可能早於 Firestore 首次快照。
+        // 在確認 duty_records 已載入前，禁止推算與建立任何週紀錄。
+        if (!this._dutyRecordsAreLoaded()) {
+            const loadFailed = this.realtimeLoadState?.duty_records === 'error';
+            container.innerHTML = `<div class="duty-card ${loadFailed ? 'duty-carryover-error' : 'duty-carryover-loading'}" role="status">
+                <i class="ph ${loadFailed ? 'ph-warning-circle' : 'ph-spinner ph-spin'}" aria-hidden="true"></i>
+                <div><strong>${loadFailed ? '無法載入值日資料' : '正在載入值日資料'}</strong><br>
+                <span>${loadFailed ? '請重新整理；若仍失敗，請聯絡 Admin。' : '載入完成後才會顯示本週清單。'}</span></div>
+            </div>`;
             return;
         }
 
@@ -402,32 +430,6 @@ export const dutyModule = {
                 ? '<span class="status-badge status-badge-info">Admin 指定</span>'
                 : '<span class="status-badge">已建立</span>'
             : '<span class="status-badge">依輪值推算</span>';
-
-        // 代班 Banner
-        let substituteBanner = '';
-        if (record && record.substitute_pending && this.currentMember) {
-            if (this.currentMember.Student_ID === record.substitute_pending) {
-                // 我是被邀請代班的人
-                const fromName = this.getMemberName(record.substitute_from || record.assigned_to);
-                substituteBanner = `
-                <div class="duty-substitute-banner">
-                    <i class="ph ph-swap"></i>
-                    <div style="flex:1;">
-                        <strong>${escapeDutyHtml(fromName)}</strong> 邀請你代班本週值日生工作
-                    </div>
-                    <button class="btn btn-primary btn-sm" onclick="app.acceptSubstitute()">接受</button>
-                    <button class="btn btn-secondary btn-sm" onclick="app.rejectSubstitute()">拒絕</button>
-                </div>`;
-            } else if (isCurrentDuty || (record.substitute_from && this.currentMember.Student_ID === record.substitute_from)) {
-                // 我發起了代班請求
-                const pendingName = this.getMemberName(record.substitute_pending);
-                substituteBanner = `
-                <div class="duty-substitute-banner">
-                    <i class="ph ph-clock"></i>
-                    <div style="flex:1;">已邀請 <strong>${escapeDutyHtml(pendingName)}</strong> 代班，等待對方確認中...</div>
-                </div>`;
-            }
-        }
 
         // 輪值順序列表
         const rosterHtml = roster.map(m => {
@@ -536,26 +538,16 @@ export const dutyModule = {
             </div>`;
         }
 
-        // 代班按鈕（只有當週值日生且未提交時可用）
-        let subBtnHtml = '';
-        if (isCurrentDuty && !submitted && !(record && record.substitute_pending)) {
-            subBtnHtml = `<button class="btn btn-secondary btn-sm" onclick="app.openSubstituteModal()">
-                <i class="ph ph-swap"></i> 找代班
-            </button>`;
-        }
-
         const adminDutyButtonsHtml = isAdmin
             ? `${record && !submitted ? `<button class="btn btn-secondary btn-sm" onclick="app.openCurrentDutyAlignmentModal()"><i class="ph ph-crosshair" aria-hidden="true"></i> 對齊本週輪值</button>` : ''}
                <button class="btn btn-secondary btn-sm" onclick="app.openNextDutyModal()"><i class="ph ph-calendar-plus" aria-hidden="true"></i> 設定下週值日生</button>`
             : '';
 
         container.innerHTML = `
-            ${substituteBanner}
-            
             <div class="duty-card">
                 <div class="duty-card-header">
                     <h3><i class="ph ph-calendar-check" style="color:var(--primary);"></i> 本週值日生：${escapeDutyHtml(member.Name_Ch)}</h3>
-                    <div class="toolbar-actions">${subBtnHtml}${adminDutyButtonsHtml}</div>
+                    <div class="toolbar-actions">${adminDutyButtonsHtml}</div>
                 </div>
                 <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
                     <div><strong>週期：</strong>${weekId} 起</div>
@@ -787,7 +779,7 @@ export const dutyModule = {
                     <span class="close" onclick="app.closeModal('current-duty-alignment-modal')">&times;</span>
                 </div>
                 <div class="modal-body">
-                    <p class="modal-intro">請選擇舊系統本週真正輪到的人。儲存後會將此人設為新的輪值起點，並清除本週尚未提交的勾選、備註與代班狀態。完成提交後才會安排下一位；若未完成，則由同一人順延。</p>
+                    <p class="modal-intro">請選擇本週真正輪到的人。儲存後會將此人設為新的輪值起點，並清除本週尚未提交的勾選與備註。完成提交後才會安排下一位；若未完成，則由同一人順延。</p>
                     <div class="form-group">
                         <label for="current-duty-assignee">本週實際輪到的人</label>
                         <select id="current-duty-assignee">${options}</select>
@@ -934,112 +926,4 @@ export const dutyModule = {
         }
     },
 
-    // === 代班流程 ===
-    openSubstituteModal: function() {
-        const weekId = this._getDutyWeekId();
-        const record = this.data.duty_records.find(item => item._id === weekId);
-        if (!record || !this._canEditDutyRecord(record) || this.currentRole === 'Admin') {
-            this.showNotification('只有本週值日生可以邀請代班', 'warning');
-            return;
-        }
-        const roster = this._getDutyRoster();
-        const currentId = this.currentMember ? this.currentMember.Student_ID : '';
-        
-        const options = roster
-            .filter(m => m.Student_ID !== currentId)
-            .map(m => `<option value="${escapeDutyHtml(m.Student_ID)}">${escapeDutyHtml(m.Name_Ch)}</option>`)
-            .join('');
-
-        // 使用 showNotification 搭配 confirm 的簡單方式
-        const modal = document.createElement('div');
-        modal.className = 'modal';
-        modal.id = 'substitute-modal';
-        modal.innerHTML = `
-        <div class="modal-content" style="max-width:400px;">
-            <div class="modal-header">
-                <h3><i class="ph ph-swap"></i> 尋找代班人</h3>
-                <span class="close" onclick="app.closeModal('substitute-modal')">&times;</span>
-            </div>
-            <div class="modal-body">
-                <p style="margin-bottom:12px; color:var(--text-muted);">選擇你要邀請的代班同學。對方確認後，工作進度會自動轉移。</p>
-                <div class="form-group">
-                    <label>代班人選</label>
-                    <select id="substitute-target">${options}</select>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="app.closeModal('substitute-modal')">取消</button>
-                <button class="btn btn-primary" onclick="app.requestSubstitute()">送出邀請</button>
-            </div>
-        </div>`;
-        document.body.appendChild(modal);
-    },
-
-    requestSubstitute: async function() {
-        const target = document.getElementById('substitute-target').value;
-        if (!target) return;
-        const weekId = this._getDutyWeekId();
-        const record = this.data.duty_records.find(item => item._id === weekId);
-        const targetIsActive = this._getDutyRoster().some(member => member.Student_ID === target);
-        if (!record || !this._canEditDutyRecord(record) || this.currentRole === 'Admin' || !targetIsActive) {
-            this.showNotification('代班邀請已失效，請重新整理後再試', 'warning');
-            return;
-        }
-        
-        try {
-            await updateDoc(doc(db, 'duty_records', weekId), {
-                substitute_pending: target,
-                substitute_from: this.currentMember.Student_ID,
-                updated_at: new Date().toISOString()
-            });
-            this.closeModal('substitute-modal');
-            document.getElementById('substitute-modal')?.remove();
-            this.showNotification('代班邀請已送出', 'success');
-        } catch (e) {
-            this.showNotification('送出失敗：' + e.message, 'error');
-        }
-    },
-
-    acceptSubstitute: async function() {
-        const weekId = this._getDutyWeekId();
-        const record = this.data.duty_records.find(item => item._id === weekId);
-        if (!record) return;
-        if (record.submitted || record.substitute_pending !== this.currentMember?.Student_ID) {
-            this.showNotification('這筆代班邀請已失效', 'warning');
-            return;
-        }
-        const originalAssignee = record.substitute_from || record.assigned_to || this._getScheduledDutyId(record);
-        try {
-            await updateDoc(doc(db, 'duty_records', weekId), {
-                scheduled_to: this._getScheduledDutyId(record),
-                assigned_to: this.currentMember.Student_ID,
-                assignment_source: 'substitute',
-                substitute_pending: null,
-                substitute_from: originalAssignee,
-                updated_at: new Date().toISOString()
-            });
-            this.showNotification('已接受代班；本週工作已轉移，後續輪值順序不變。', 'success');
-        } catch (e) {
-            this.showNotification('操作失敗：' + e.message, 'error');
-        }
-    },
-
-    rejectSubstitute: async function() {
-        const weekId = this._getDutyWeekId();
-        const record = this.data.duty_records.find(item => item._id === weekId);
-        if (!record || record.submitted || record.substitute_pending !== this.currentMember?.Student_ID) {
-            this.showNotification('這筆代班邀請已失效', 'warning');
-            return;
-        }
-        try {
-            await updateDoc(doc(db, 'duty_records', weekId), {
-                substitute_pending: null,
-                substitute_from: null,
-                updated_at: new Date().toISOString()
-            });
-            this.showNotification('已拒絕代班請求', 'info');
-        } catch (e) {
-            this.showNotification('操作失敗：' + e.message, 'error');
-        }
-    }
 };

@@ -40,3 +40,8 @@ export function canAutoCarryOver(record) {
         && (record.assignment_source || 'auto') === 'auto'
         && !hasDutyProgress(record);
 }
+
+/** 只有首次快照已完成且 Firestore 確認文件不存在時，才能建立空白週清單。 */
+export function canInitializeDutyWeek(loadState, recordExists) {
+    return loadState === 'loaded' && !recordExists;
+}

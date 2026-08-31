@@ -116,37 +116,9 @@ service cloud.firestore {
             && request.resource.data.submitted_at is string
           )
           || (
-            changed.hasOnly(['substitute_pending', 'substitute_from', 'updated_at'])
-            && request.resource.data.substitute_from == resource.data.assigned_to
-            && request.resource.data.substitute_pending != resource.data.assigned_to
-            && isActiveMember(request.resource.data.substitute_pending)
-          )
-          || (
             changed.hasOnly(['status', 'carried_over_to', 'updated_at'])
             && request.resource.data.status == 'carried_over'
             && request.resource.data.carried_over_to is string
-          )
-        );
-    }
-
-    function validDutyInviteeUpdate() {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return ownsMember(resource.data.substitute_pending)
-        && resource.data.submitted == false
-        && (
-          (
-            changed.hasOnly([
-              'assigned_to', 'assignment_source', 'substitute_pending',
-              'substitute_from', 'updated_at'
-            ])
-            && request.resource.data.assigned_to == resource.data.substitute_pending
-            && request.resource.data.assignment_source == 'substitute'
-            && request.resource.data.substitute_pending == null
-          )
-          || (
-            changed.hasOnly(['substitute_pending', 'substitute_from', 'updated_at'])
-            && request.resource.data.substitute_pending == null
-            && request.resource.data.substitute_from == null
           )
         );
     }
@@ -182,8 +154,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && validDutyCreate(weekId);
       allow update: if isAdmin()
-        || (isSignedIn() && validDutyAssigneeUpdate())
-        || (isSignedIn() && validDutyInviteeUpdate());
+        || (isSignedIn() && validDutyAssigneeUpdate());
       allow delete: if isAdmin();
     }
 

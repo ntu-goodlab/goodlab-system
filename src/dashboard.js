@@ -147,20 +147,8 @@ export const dashboardModule = {
 
     _getOverviewTasks: function(dutyData) {
         const tasks = [];
-        const memberId = this.currentMember?.Student_ID;
         const settings = this.data.inventory.find(item => item.Property_ID === '_SETTINGS_');
         const inventoryOpen = Boolean(settings?.IsOpen);
-
-        if (dutyData.record?.substitute_pending === memberId) {
-            tasks.push({
-                icon: 'ph-swap',
-                title: '有一筆值日代班邀請',
-                detail: '前往值日生頁面確認是否接受。',
-                action: "app.switchTab('duty')",
-                label: '查看邀請',
-                tone: 'warning'
-            });
-        }
 
         if (inventoryOpen) {
             const pendingCount = this.data.inventory.filter(item =>
