@@ -8,9 +8,9 @@
  *                            cleaning: {sweep: false, ...}, supplies: {acetone: false, ...},
  *                            submitted: false, submitted_at: null }
  */
-import { db, doc, setDoc, updateDoc, writeBatch } from './firebase.js';
+import { db, doc, setDoc, updateDoc, writeBatch, runTransaction } from './firebase.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
-import { getDutyRoster, getDutyWeekId } from './duty-schedule.js';
+import { canAutoCarryOver, getDutyRoster, getDutyWeekId, hasDutyProgress } from './duty-schedule.js';
 
 const DUTY_NOTE_MAX_LENGTH = 1000;
 const escapeDutyHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -55,21 +55,11 @@ export const dutyModule = {
     },
 
     _hasDutyProgress: function(record) {
-        if (!record) return false;
-        return Boolean(
-            String(record.note || '').trim()
-            || record.substitute_pending
-            || record.assignment_source === 'substitute'
-            || Object.values(record.cleaning || {}).some(Boolean)
-            || Object.values(record.supplies || {}).some(Boolean)
-        );
+        return hasDutyProgress(record);
     },
 
     _canAutoCarryOver: function(currentRecord) {
-        if (!currentRecord) return true;
-        return !currentRecord.submitted
-            && (currentRecord.assignment_source || 'auto') === 'auto'
-            && !this._hasDutyProgress(currentRecord);
+        return canAutoCarryOver(currentRecord);
     },
 
     _canAutoReplaceInactiveAssignment: function(record) {
@@ -255,15 +245,25 @@ export const dutyModule = {
         });
 
         try {
-            const batch = writeBatch(db);
-            // 不 merge，確保順延週使用全新的 checklist 與備註。
-            batch.set(doc(db, 'duty_records', weekId), payload);
-            batch.update(doc(db, 'duty_records', previousRecord._id), {
-                status: 'carried_over',
-                carried_over_to: weekId,
-                updated_at: new Date().toISOString()
+            const currentRef = doc(db, 'duty_records', weekId);
+            const previousRef = doc(db, 'duty_records', previousRecord._id);
+            await runTransaction(db, async transaction => {
+                const currentSnapshot = await transaction.get(currentRef);
+                const previousSnapshot = await transaction.get(previousRef);
+                const currentData = currentSnapshot.exists() ? currentSnapshot.data() : null;
+                const previousData = previousSnapshot.exists() ? previousSnapshot.data() : null;
+
+                // Admin 對齊、代班、既有進度或已提交紀錄都具有優先權。
+                // Transaction 會在同時寫入時重新執行，因此自動順延不能再蓋掉 Admin 結果。
+                if (!previousData || previousData.submitted || !this._canAutoCarryOver(currentData)) return;
+
+                transaction.set(currentRef, payload);
+                transaction.update(previousRef, {
+                    status: 'carried_over',
+                    carried_over_to: weekId,
+                    updated_at: new Date().toISOString()
+                });
             });
-            await batch.commit();
         } finally {
             if (this._dutyCarryoverSyncWeek === weekId) this._dutyCarryoverSyncWeek = null;
         }
@@ -855,6 +855,7 @@ export const dutyModule = {
             this.showNotification(`輪值已對齊：本週 ${selectedMember.Name_Ch}${nextMember ? `；完成後下一位為 ${nextMember.Name_Ch}` : ''}`, 'success');
         } catch (error) {
             if (errorElement) errorElement.textContent = '對齊失敗：' + error.message;
+            this.showNotification('本週值日生對齊失敗：' + error.message, 'error', 8000);
         } finally {
             if (button) {
                 button.disabled = false;

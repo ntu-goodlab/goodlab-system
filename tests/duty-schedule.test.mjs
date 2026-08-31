@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getDutyRoster, getDutyWeekId } from '../src/duty-schedule.js';
+import { canAutoCarryOver, getDutyRoster, getDutyWeekId } from '../src/duty-schedule.js';
 
 test('值日順序依成員入學日期由早到晚，不依學號字串', () => {
     const members = [
@@ -31,4 +31,11 @@ test('台北時間週一凌晨仍使用當天作為週次 ID', () => {
     assert.equal(getDutyWeekId('2026-08-31T00:30:00+08:00'), '2026-08-31');
     assert.equal(getDutyWeekId('2026-09-06T23:59:59+08:00'), '2026-08-31');
     assert.equal(getDutyWeekId('2026-09-07T00:00:00+08:00'), '2026-09-07');
+});
+
+test('Admin 對齊具有優先權，自動順延不可覆蓋', () => {
+    assert.equal(canAutoCarryOver(null), true);
+    assert.equal(canAutoCarryOver({ submitted: false, assignment_source: 'auto', cleaning: {}, supplies: {}, note: '' }), true);
+    assert.equal(canAutoCarryOver({ submitted: false, assignment_source: 'admin', cleaning: {}, supplies: {}, note: '' }), false);
+    assert.equal(canAutoCarryOver({ submitted: false, assignment_source: 'carryover', cleaning: {}, supplies: {}, note: '' }), false);
 });

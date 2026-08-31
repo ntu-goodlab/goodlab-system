@@ -22,3 +22,21 @@ export function getDutyRoster(members = []) {
         .filter(member => member.Degree === 'Master' && member.Role !== 'Admin' && member.Status === 'Active')
         .sort(compareMembersForDirectory);
 }
+
+export function hasDutyProgress(record) {
+    if (!record) return false;
+    return Boolean(
+        String(record.note || '').trim()
+        || record.substitute_pending
+        || record.assignment_source === 'substitute'
+        || Object.values(record.cleaning || {}).some(Boolean)
+        || Object.values(record.supplies || {}).some(Boolean)
+    );
+}
+
+export function canAutoCarryOver(record) {
+    if (!record) return true;
+    return !record.submitted
+        && (record.assignment_source || 'auto') === 'auto'
+        && !hasDutyProgress(record);
+}
