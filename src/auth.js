@@ -265,7 +265,7 @@ export const authModule = {
 
         if (this.currentRole === 'User') {
             const pageContent = this.userHelpDocs?.[tabName] || '<p>本頁目前沒有額外操作說明。</p>';
-            const pageNames = { overview: '實驗室總覽', duty: '值日生工作', inventory: '產編清點', instruments: '儀器設備', members: '實驗室成員' };
+            const pageNames = { overview: '實驗室總覽', duty: '值日生工作', 'duty-history': '值日生執行紀錄', inventory: '產編清點', instruments: '儀器設備', members: '實驗室成員' };
             if (title) title.textContent = 'GOODLAB 使用說明';
             body.innerHTML = `<section class="help-current-page"><span class="help-eyebrow">目前頁面</span><h4>${escapeHtml(pageNames[tabName] || 'GOODLAB')}</h4>${pageContent}</section>${commonQuestions}`;
         } else if (this.currentRole === 'Admin') {

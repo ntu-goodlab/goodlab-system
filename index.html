@@ -265,6 +265,29 @@
                     </div>
                 </section>
 
+                <section id="page-duty-history" class="page-section" aria-label="值日生執行紀錄">
+                    <div class="duty-history-toolbar">
+                        <button class="btn btn-secondary" type="button" onclick="app.switchTab('duty')">
+                            <i class="ph ph-arrow-left" aria-hidden="true"></i> 返回值日生
+                        </button>
+                        <div class="duty-history-filters" role="search">
+                            <label class="sr-only" for="search-duty-history">搜尋值日生姓名或學號</label>
+                            <div class="input-with-icon">
+                                <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
+                                <input id="search-duty-history" type="search" placeholder="搜尋姓名或學號"
+                                    autocomplete="off" oninput="app.renderDutyHistory()">
+                            </div>
+                            <label class="sr-only" for="filter-duty-history-status">篩選值日紀錄狀態</label>
+                            <select id="filter-duty-history-status" onchange="app.renderDutyHistory()">
+                                <option value="all">全部狀態</option>
+                                <option value="completed">已完成</option>
+                                <option value="incomplete">未完成／已順延</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="duty-history-list" class="duty-history-list" aria-live="polite"></div>
+                </section>
+
                 <!-- ======= 實驗室行事 ======= -->
                 <section id="page-routine" class="page-section">
                     <div id="routine-content">

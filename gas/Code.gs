@@ -13,6 +13,20 @@ const FIRESTORE_PAGE_SIZE = 300;
 const MAX_EMAIL_LIST_ITEMS = 20;
 const DUTY_COMPLETION_SENT_PREFIX = 'DUTY_COMPLETION_SENT_';
 const TEST_RECIPIENT_EMAIL = 'f10943138@ntu.edu.tw';
+const DUTY_SUPPLY_NAMES = {
+  acetone: 'Acetone',
+  methanol: 'Methanol',
+  detergent: 'Detergent',
+  n2_tank: '氮氣鋼瓶',
+  wiper: '無塵紙',
+  glass_slide: '載玻片',
+  gloves_s: '乳膠手套 S',
+  gloves_m: '乳膠手套 M',
+  gloves_l: '乳膠手套 L',
+  cotton_swab: '棉花棒',
+  aluminum_foil: '鋁箔',
+  pe_gloves: 'PE 手套'
+};
 const PROPERTY_KEYS = {
   projectId: 'FIREBASE_PROJECT_ID',
   siteUrl: 'GOODLAB_SITE_URL'
@@ -86,8 +100,15 @@ function testDutyCompletionToMe() {
       assigned_to: previewId,
       submitted: true
     }, existingIsEligible ? existing : {});
-    previewRecord.note = previewRecord.note || '預覽範例：已補充手套；IPA 已叫貨，預計下週到。';
+    previewRecord.note = previewRecord.note || '預覽留言：機房地板有積水，請下週協助留意。';
     previewRecord.submitted = true;
+    previewRecord.submitted_at = previewRecord.submitted_at || new Date().toISOString();
+    previewRecord.supplies = {};
+    Object.keys(DUTY_SUPPLY_NAMES).forEach(function (key) {
+      previewRecord.supplies[key] = 'sufficient';
+    });
+    previewRecord.supplies.acetone = 'ordered';
+    previewRecord.supplies.methanol = 'ordered';
 
     sendEmail_(buildDutyCompletionMessage_(previewRecord, members, dutyRecords, recipient, true));
     console.log('值日完成通知預覽已寄給測試信箱：' + recipient);
@@ -252,6 +273,9 @@ function checkDutyCompletionNotification() {
 
 function buildDutyCompletionMessage_(record, members, dutyRecords, recipient, isPreview, bcc) {
   const weekId = record.week_start || record._id;
+  const weekEndId = shiftDateKey_(weekId, 6);
+  const nextWeekId = shiftDateKey_(weekId, 7);
+  const nextWeekEndId = shiftDateKey_(weekId, 13);
   const scheduledTo = record.scheduled_to || record.assigned_to;
   const assignedTo = record.assigned_to || scheduledTo;
   const scheduledMember = members.find(function (member) { return member.Student_ID === scheduledTo; });
@@ -264,7 +288,17 @@ function buildDutyCompletionMessage_(record, members, dutyRecords, recipient, is
   const noteHtml = note
     ? '<div style="padding:14px 16px;background:#f1f5f9;border:1px solid #dce3ec;border-radius:10px;white-space:normal;overflow-wrap:anywhere;">'
       + escapeHtml_(note).replace(/\r?\n/g, '<br>') + '</div>'
-    : '<p style="color:#526075;">本週沒有補充備註。</p>';
+    : '<p style="color:#526075;">無留言。</p>';
+  const submittedAt = formatDutySubmittedAt_(record.submitted_at);
+  const detailHtml = '<ul style="margin:0;padding-left:22px;">'
+    + '<li><strong>值日生：</strong>' + assignedName + '</li>'
+    + '<li><strong>值日期間：</strong>' + formatDutyDate_(weekId) + '～' + formatDutyDate_(weekEndId) + '</li>'
+    + '<li><strong>提交時間：</strong>' + submittedAt + '</li>'
+    + '</ul>';
+  const nextDutyHtml = '<ul style="margin:0;padding-left:22px;">'
+    + '<li><strong>值日生：</strong>' + nextName + '</li>'
+    + '<li><strong>值日期間：</strong>' + formatDutyDate_(nextWeekId) + '～' + formatDutyDate_(nextWeekEndId) + '</li>'
+    + '</ul>';
   const substituteHtml = assignedTo !== scheduledTo
     ? '<p style="color:#526075;">原排定：' + scheduledName + '；本週由 ' + assignedName + ' 代班完成。後續輪值仍依原排定順序。</p>'
     : '';
@@ -275,18 +309,62 @@ function buildDutyCompletionMessage_(record, members, dutyRecords, recipient, is
   return {
     to: recipient,
     bcc: bcc || '',
-    subject: (isPreview ? '【GOODLAB 測試預覽】' : '【GOODLAB】') + '本週值日工作已完成（' + weekId + '）',
+    subject: (isPreview ? '【GOODLAB 測試預覽】' : '【GOODLAB】')
+      + formatDutyDateRangeShort_(weekId, weekEndId) + ' 值日工作已完成',
     htmlBody: emailLayout_(
-      '本週值日工作已完成',
-      '<p><strong>' + assignedName + '</strong> 已提交 ' + escapeHtml_(weekId) + ' 起的值日工作。</p>'
+      formatDutyDateRangeShort_(weekId, weekEndId) + ' 值日工作',
+      sectionHtml_('詳細資訊', detailHtml)
         + carryoverHtml
         + substituteHtml
-        + sectionHtml_('本週備註／補貨與叫貨', noteHtml)
-        + sectionHtml_('下週值日生', '<p><strong>' + nextName + '</strong></p>')
-        + siteLinkHtml_('查看值日生紀錄', 'duty')
-        + siteUrlTextHtml_('duty')
+        + sectionHtml_('耗材狀況', buildDutySupplySummaryHtml_(record.supplies || {}))
+        + sectionHtml_('本週留言', noteHtml)
+        + sectionHtml_('下週值日生資訊', nextDutyHtml)
+        + siteLinkHtml_('查看值日生執行紀錄', 'duty-history')
+        + siteUrlTextHtml_('duty-history')
     )
   };
+}
+
+function normalizeDutySupplyStatus_(value) {
+  if (value === true) return 'legacy_checked';
+  return ['sufficient', 'ordered', 'needs_order'].indexOf(value) !== -1 ? value : '';
+}
+
+function buildDutySupplySummaryHtml_(supplies) {
+  const ordered = [];
+  const needsOrder = [];
+  const legacyChecked = [];
+  const unconfirmed = [];
+
+  Object.keys(DUTY_SUPPLY_NAMES).forEach(function (key) {
+    const status = normalizeDutySupplyStatus_(supplies[key]);
+    if (status === 'ordered') ordered.push(DUTY_SUPPLY_NAMES[key]);
+    else if (status === 'needs_order') needsOrder.push(DUTY_SUPPLY_NAMES[key]);
+    else if (status === 'legacy_checked') legacyChecked.push(DUTY_SUPPLY_NAMES[key]);
+    else if (!status) unconfirmed.push(DUTY_SUPPLY_NAMES[key]);
+  });
+
+  if (!ordered.length && !needsOrder.length && !legacyChecked.length && !unconfirmed.length) {
+    return '<p>本週無需叫貨。</p>';
+  }
+
+  if (legacyChecked.length === Object.keys(DUTY_SUPPLY_NAMES).length) {
+    return '<p>已完成耗材清點；舊版資料未區分數量足夠或已叫貨。</p>';
+  }
+
+  let html = '<ul style="margin:0;padding-left:22px;">';
+  html += '<li><strong>本週叫貨：</strong>' + (ordered.length ? escapeHtml_(ordered.join('、')) : '無') + '</li>';
+  if (legacyChecked.length) {
+    html += '<li><strong>舊版已清點：</strong>' + escapeHtml_(legacyChecked.join('、')) + '（未區分足夠或已叫貨）</li>';
+  }
+  // 正常提交不應包含以下狀態；保留防呆，避免舊資料或人工改值被誤認為正常完成。
+  if (needsOrder.length) {
+    html += '<li style="color:#9a3412;"><strong>資料異常・仍待叫貨：</strong>' + escapeHtml_(needsOrder.join('、')) + '</li>';
+  }
+  if (unconfirmed.length) {
+    html += '<li style="color:#9a3412;"><strong>資料異常・未確認：</strong>' + escapeHtml_(unconfirmed.join('、')) + '</li>';
+  }
+  return html + '</ul>';
 }
 
 function checkWeeklyAdminReport() {
@@ -948,6 +1026,32 @@ function shiftDateKey_(dateKey, days) {
   const date = new Date(dateKey + 'T12:00:00+08:00');
   date.setTime(date.getTime() + days * 86400000);
   return dateKey_(date);
+}
+
+function formatDutyDate_(dateKey) {
+  const date = new Date(dateKey + 'T12:00:00+08:00');
+  const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+  const weekdayIndex = Number(Utilities.formatDate(date, TIME_ZONE, 'u')) % 7;
+  return Utilities.formatDate(date, TIME_ZONE, 'yyyy/M/d') + '（' + weekdays[weekdayIndex] + '）';
+}
+
+function formatDutyDateRangeShort_(startKey, endKey) {
+  const start = new Date(startKey + 'T12:00:00+08:00');
+  const end = new Date(endKey + 'T12:00:00+08:00');
+  const startText = Utilities.formatDate(start, TIME_ZONE, 'yyyy/M/d');
+  const endPattern = start.getFullYear() === end.getFullYear() ? 'M/d' : 'yyyy/M/d';
+  return startText + '–' + Utilities.formatDate(end, TIME_ZONE, endPattern);
+}
+
+function formatDutySubmittedAt_(value) {
+  if (!value) return '未記錄';
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return escapeHtml_(value);
+  const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+  const weekdayIndex = Number(Utilities.formatDate(date, TIME_ZONE, 'u')) % 7;
+  return Utilities.formatDate(date, TIME_ZONE, 'yyyy/M/d')
+    + '（' + weekdays[weekdayIndex] + '） '
+    + Utilities.formatDate(date, TIME_ZONE, 'HH:mm');
 }
 
 function formatMoney_(amount) {

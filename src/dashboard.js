@@ -6,6 +6,7 @@
  */
 import { db, doc, setDoc, deleteDoc } from './firebase.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, DUTY_NOTES } from './constants.js';
+import { isDutySupplyReadyForSubmit } from './duty-supplies.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -106,7 +107,7 @@ export const dashboardModule = {
         const isCurrentUser = Boolean(this.currentMember?.Student_ID && this.currentMember.Student_ID === assignedTo);
         const completedCount = record
             ? [...DUTY_CLEANING_TASKS.map(task => Boolean(record.cleaning?.[task.id])),
-               ...DUTY_SUPPLY_ITEMS.map(item => Boolean(record.supplies?.[item.id]))].filter(Boolean).length
+               ...DUTY_SUPPLY_ITEMS.map(item => isDutySupplyReadyForSubmit(record.supplies?.[item.id]))].filter(Boolean).length
             : 0;
         const totalCount = DUTY_CLEANING_TASKS.length + DUTY_SUPPLY_ITEMS.length;
 

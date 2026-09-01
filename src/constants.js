@@ -30,7 +30,7 @@ export const ROUTINE_CATEGORIES = [
 export const DUTY_CLEANING_TASKS = [
     { id: 'sweep', name: '掃地', detail: '實驗區及辦公區' },
     { id: 'trash', name: '倒垃圾', detail: '實驗室垃圾桶×5、辦公室垃圾桶×1、資源回收' },
-    { id: 'supply_check', name: '清點耗材', detail: '清點耗材數量並詳實登記在小白板上，如有缺少需叫貨' },
+    { id: 'supply_check', name: '清點耗材', detail: '實際確認耗材數量，並在下方逐項選擇「足夠、已叫貨或待叫貨」' },
     { id: 'water', name: '冰水槽水位', detail: '確認機房冰水儲存槽水位，不夠拿機房乾淨空桶裝水' },
     { id: 'fingerprint', name: '門禁指紋機', detail: '實驗區及辦公區，只能拿清水擦拭' }
 ];

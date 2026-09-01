@@ -11,6 +11,20 @@
 import { db, doc, setDoc, updateDoc, runTransaction } from './firebase.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
 import { canAutoCarryOver, canInitializeDutyWeek, getDutyRoster, getDutyWeekId, hasDutyProgress } from './duty-schedule.js';
+import {
+    DUTY_SUPPLY_STATUS_OPTIONS,
+    isDutySupplyReadyForSubmit,
+    isDutySupplyStatusSelected,
+    normalizeDutySupplyStatus
+} from './duty-supplies.js';
+import {
+    formatDutyHistoryRange,
+    formatDutyHistorySubmittedAt,
+    getDutyHistoryStatus,
+    getOrderedDutySupplyNames,
+    getVisibleDutyHistoryRecords,
+    hasLegacyDutySupplyData
+} from './duty-history.js';
 
 const DUTY_NOTE_MAX_LENGTH = 1000;
 const escapeDutyHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -75,7 +89,7 @@ export const dutyModule = {
         const cleaning = {};
         DUTY_CLEANING_TASKS.forEach(task => { cleaning[task.id] = false; });
         const supplies = {};
-        DUTY_SUPPLY_ITEMS.forEach(item => { supplies[item.id] = false; });
+        DUTY_SUPPLY_ITEMS.forEach(item => { supplies[item.id] = null; });
         return Object.assign({
             week_start: weekId,
             scheduled_to: scheduledTo,
@@ -456,7 +470,7 @@ export const dutyModule = {
 
         // 耗材 checklist（含 vendor tooltip，依 vendorGroup 查詢）
         const suppliesHtml = DUTY_SUPPLY_ITEMS.map(item => {
-            const checked = record && record.supplies && record.supplies[item.id] ? 'checked' : '';
+            const status = normalizeDutySupplyStatus(record?.supplies?.[item.id]);
             const disabled = !canEdit || (record && record.submitted) ? 'disabled' : '';
             const vendor = SUPPLY_VENDORS[item.vendorGroup];
             const contactsHtml = vendor?.contacts?.map(contact => `
@@ -487,10 +501,19 @@ export const dutyModule = {
                     </div>
                 </details>` : '';
 
+            const statusOptionsHtml = DUTY_SUPPLY_STATUS_OPTIONS.map(option => `
+                <label class="duty-supply-status-option duty-supply-status-${option.value}">
+                    <input type="radio" name="duty-supply-${escapeDutyHtml(item.id)}"
+                        value="${option.value}" ${status === option.value ? 'checked' : ''} ${disabled}
+                        onchange="app.setDutySupplyStatus('${item.id}', this.value)">
+                    <i class="ph ${option.icon}" aria-hidden="true"></i>
+                    <span>${option.label}</span>
+                </label>`).join('');
+            const legacyStatusHtml = status === 'legacy_checked'
+                ? '<span class="duty-supply-legacy-status"><i class="ph ph-info" aria-hidden="true"></i>已清點（舊版未區分）</span>'
+                : '';
+
             return `<li class="duty-supply-item">
-                <input type="checkbox" ${checked} ${disabled}
-                    aria-label="完成${escapeDutyHtml(item.name)}清點"
-                    onchange="app.toggleDutyItem('supplies', '${item.id}', this.checked)">
                 <div class="duty-item-content">
                     <div class="duty-item-heading">
                         <span class="duty-item-name">${item.name}</span>${tooltipHtml}
@@ -500,20 +523,25 @@ export const dutyModule = {
                         <span><i class="ph ph-map-pin" aria-hidden="true"></i>${item.location}</span>
                     </div>
                 </div>
+                <fieldset class="duty-supply-status-group" ${disabled ? 'disabled' : ''}>
+                    <legend class="sr-only">${escapeDutyHtml(item.name)}耗材狀態</legend>
+                    ${legacyStatusHtml}
+                    ${statusOptionsHtml}
+                </fieldset>
             </li>`;
         }).join('');
 
         const noteValue = String(record?.note || '').slice(0, DUTY_NOTE_MAX_LENGTH);
         const noteEditorHtml = `<div class="duty-card duty-note-card">
             <div class="duty-card-header">
-                <h3><i class="ph ph-note-pencil" aria-hidden="true"></i> 本週備註</h3>
+                <h3><i class="ph ph-note-pencil" aria-hidden="true"></i> 本週留言</h3>
             </div>
-            <label class="duty-note-label" for="duty-note">補貨、叫貨、異常或交接事項（選填）</label>
+            <label class="duty-note-label" for="duty-note">留言或交接事項（選填）</label>
             <textarea id="duty-note" maxlength="${DUTY_NOTE_MAX_LENGTH}" rows="4"
                 ${submitted ? 'disabled' : ''}
                 oninput="app.updateDutyNoteCount(this.value)"
                 onchange="app.saveDutyNote(this.value)"
-                placeholder="例如：已補充手套；IPA 已叫貨，預計下週到。">${escapeDutyHtml(noteValue)}</textarea>
+                placeholder="例如：機房地板有積水，請下週協助留意。">${escapeDutyHtml(noteValue)}</textarea>
             <div class="duty-note-footer">
                 <span id="duty-note-status" role="status">${submitted ? '已隨本週紀錄封存' : '離開欄位時自動儲存，提交時會再確認一次'}</span>
                 <span id="duty-note-count">${noteValue.length}/${DUTY_NOTE_MAX_LENGTH}</span>
@@ -521,7 +549,7 @@ export const dutyModule = {
         </div>`;
         const readonlyNoteHtml = submitted && noteValue
             ? `<div class="duty-card duty-note-card">
-                <div class="duty-card-header"><h3><i class="ph ph-note" aria-hidden="true"></i> 本週備註</h3></div>
+                <div class="duty-card-header"><h3><i class="ph ph-note" aria-hidden="true"></i> 本週留言</h3></div>
                 <p class="duty-note-readonly">${escapeDutyHtml(noteValue).replace(/\n/g, '<br>')}</p>
             </div>`
             : '';
@@ -538,6 +566,9 @@ export const dutyModule = {
             </div>`;
         }
 
+        const dutyHistoryButtonHtml = `<button class="btn btn-secondary" type="button" onclick="app.switchTab('duty-history')">
+            <i class="ph ph-clock-counter-clockwise" aria-hidden="true"></i> 執行紀錄
+        </button>`;
         const adminDutyButtonsHtml = isAdmin
             ? `${record && !submitted ? `<button class="btn btn-secondary btn-sm" onclick="app.openCurrentDutyAlignmentModal()"><i class="ph ph-crosshair" aria-hidden="true"></i> 對齊本週輪值</button>` : ''}
                <button class="btn btn-secondary btn-sm" onclick="app.openNextDutyModal()"><i class="ph ph-calendar-plus" aria-hidden="true"></i> 設定下週值日生</button>`
@@ -547,7 +578,7 @@ export const dutyModule = {
             <div class="duty-card">
                 <div class="duty-card-header">
                     <h3><i class="ph ph-calendar-check" style="color:var(--primary);"></i> 本週值日生：${escapeDutyHtml(member.Name_Ch)}</h3>
-                    <div class="toolbar-actions">${adminDutyButtonsHtml}</div>
+                    <div class="toolbar-actions">${dutyHistoryButtonHtml}${adminDutyButtonsHtml}</div>
                 </div>
                 <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
                     <div><strong>週期：</strong>${weekId} 起</div>
@@ -571,7 +602,8 @@ export const dutyModule = {
             </div>
 
             <div class="duty-card">
-                <div class="duty-card-header"><h3><i class="ph ph-package" aria-hidden="true"></i> 耗材清點 <span style="font-size:0.8rem; color:var(--text-muted); font-weight:400;">(打勾 = 數量足夠或已叫貨)</span></h3></div>
+                <div class="duty-card-header"><h3><i class="ph ph-package" aria-hidden="true"></i> 耗材清點</h3></div>
+                <p class="duty-supply-submit-help"><i class="ph ph-info" aria-hidden="true"></i> 每項皆須選擇；「待叫貨」會保留紀錄，但完成叫貨並改為「已叫貨」後才能提交。</p>
                 <ul class="duty-checklist">${suppliesHtml}</ul>
             </div>
 
@@ -608,6 +640,103 @@ export const dutyModule = {
                 this.showNotification('建立本週值日清單失敗：' + error.message, 'error');
             });
         }
+    },
+
+    renderDutyHistory: function() {
+        const container = document.getElementById('duty-history-list');
+        if (!container) return;
+
+        if (this.currentRole === 'Guest') {
+            container.innerHTML = `<div class="duty-history-state" role="status">
+                <i class="ph ph-lock-key" aria-hidden="true"></i>
+                <strong>請先登入並完成綁定</strong>
+            </div>`;
+            return;
+        }
+
+        if (!this._dutyRecordsAreLoaded()) {
+            const failed = this.realtimeLoadState?.duty_records === 'error';
+            container.innerHTML = `<div class="duty-history-state ${failed ? 'is-error' : ''}" role="${failed ? 'alert' : 'status'}">
+                <i class="ph ${failed ? 'ph-warning-circle' : 'ph-spinner ph-spin'}" aria-hidden="true"></i>
+                <div><strong>${failed ? '無法載入值日紀錄' : '正在載入值日紀錄'}</strong>
+                <p>${failed ? '請重新整理；若仍失敗，請聯絡 Admin。' : '完成後會自動顯示。'}</p></div>
+                ${failed ? '<button class="btn btn-secondary" type="button" onclick="app.renderDutyHistory()">重試</button>' : ''}
+            </div>`;
+            return;
+        }
+
+        const currentWeekId = this._getDutyWeekId();
+        const search = String(document.getElementById('search-duty-history')?.value || '').trim().toLocaleLowerCase('zh-TW');
+        const statusFilter = document.getElementById('filter-duty-history-status')?.value || 'all';
+        const records = getVisibleDutyHistoryRecords(this.data.duty_records, currentWeekId).filter(record => {
+            const status = getDutyHistoryStatus(record, currentWeekId);
+            const assignedTo = record.assigned_to || record.scheduled_to || '';
+            const name = this.getMemberName(assignedTo);
+            const matchesSearch = !search || `${name} ${assignedTo}`.toLocaleLowerCase('zh-TW').includes(search);
+            const matchesStatus = statusFilter === 'all' || status.key === statusFilter;
+            return matchesSearch && matchesStatus;
+        });
+
+        if (!records.length) {
+            const hasFilters = Boolean(search || statusFilter !== 'all');
+            container.innerHTML = `<div class="duty-history-state" role="status">
+                <i class="ph ${hasFilters ? 'ph-magnifying-glass' : 'ph-clock-counter-clockwise'}" aria-hidden="true"></i>
+                <strong>${hasFilters ? '找不到符合條件的紀錄' : '目前還沒有值日執行紀錄'}</strong>
+                <p>${hasFilters ? '請調整搜尋文字或狀態篩選。' : '完成提交或發生未完成順延後，紀錄會顯示在這裡。'}</p>
+            </div>`;
+            return;
+        }
+
+        container.innerHTML = records.map(record => {
+            const weekId = record.week_start || record._id;
+            const assignedTo = record.assigned_to || record.scheduled_to || '';
+            const name = this.getMemberName(assignedTo);
+            const status = getDutyHistoryStatus(record, currentWeekId);
+            const isCompleted = status.key === 'completed';
+            const orderedNames = getOrderedDutySupplyNames(record.supplies || {}, DUTY_SUPPLY_ITEMS);
+            const hasLegacy = hasLegacyDutySupplyData(record.supplies || {}, DUTY_SUPPLY_ITEMS);
+            const note = String(record.note || '').trim();
+            let supplyPreview = '未提交，無叫貨完成紀錄';
+            let supplyDetail = supplyPreview;
+            if (isCompleted && orderedNames.length) {
+                supplyPreview = `本週叫貨：${orderedNames.join('、')}`;
+                supplyDetail = orderedNames.join('、');
+            } else if (isCompleted && hasLegacy) {
+                supplyPreview = '舊版紀錄未區分叫貨狀態';
+                supplyDetail = '舊版資料只記錄已完成清點，無法判斷當時是否叫貨。';
+            } else if (isCompleted) {
+                supplyPreview = '本週無需叫貨';
+                supplyDetail = '本週無需叫貨。';
+            }
+
+            return `<details class="duty-history-item">
+                <summary>
+                    <span class="duty-history-summary-main">
+                        <strong class="duty-history-range">${escapeDutyHtml(formatDutyHistoryRange(weekId))}</strong>
+                        <span class="duty-history-person">${escapeDutyHtml(name)}</span>
+                        <span class="duty-history-preview">${escapeDutyHtml(supplyPreview)}</span>
+                    </span>
+                    <span class="duty-history-status duty-history-status-${status.className}">
+                        <i class="ph ${status.icon}" aria-hidden="true"></i>${status.label}
+                    </span>
+                    <i class="ph ph-caret-down duty-history-caret" aria-hidden="true"></i>
+                </summary>
+                <div class="duty-history-detail">
+                    <div class="duty-history-submitted">
+                        <span>提交時間</span>
+                        <strong>${escapeDutyHtml(formatDutyHistorySubmittedAt(record.submitted_at))}</strong>
+                    </div>
+                    <section aria-label="本週叫貨">
+                        <h3><i class="ph ph-truck" aria-hidden="true"></i> 本週叫貨</h3>
+                        <p>${escapeDutyHtml(supplyDetail)}</p>
+                    </section>
+                    <section aria-label="本週留言">
+                        <h3><i class="ph ph-note" aria-hidden="true"></i> 本週留言</h3>
+                        <p class="duty-history-note">${note ? escapeDutyHtml(note).replace(/\r?\n/g, '<br>') : '無留言。'}</p>
+                    </section>
+                </div>
+            </details>`;
+        }).join('');
     },
 
     copyVendorPhone: async function(event, phone) {
@@ -648,21 +777,50 @@ export const dutyModule = {
     toggleDutyItem: async function(category, itemId, checked) {
         const weekId = this._getDutyWeekId();
         const record = this.data.duty_records.find(item => item._id === weekId);
-        const validItem = category === 'cleaning'
-            ? DUTY_CLEANING_TASKS.some(item => item.id === itemId)
-            : category === 'supplies' && DUTY_SUPPLY_ITEMS.some(item => item.id === itemId);
+        const validItem = category === 'cleaning' && DUTY_CLEANING_TASKS.some(item => item.id === itemId);
         if (!validItem || !this._canEditDutyRecord(record)) {
             this.showNotification('你沒有權限修改這份值日清單', 'warning');
             this.renderDuty();
             return;
         }
+        const previousValue = record.cleaning?.[itemId];
+        if (!record.cleaning) record.cleaning = {};
+        record.cleaning[itemId] = checked;
         try {
             await updateDoc(doc(db, 'duty_records', weekId), {
-                [`${category}.${itemId}`]: checked,
+                [`cleaning.${itemId}`]: checked,
                 updated_at: new Date().toISOString()
             });
         } catch (e) {
+            record.cleaning[itemId] = previousValue;
+            this.renderDuty();
             this.showNotification('更新失敗：' + e.message, 'error');
+        }
+    },
+
+    setDutySupplyStatus: async function(itemId, status) {
+        const weekId = this._getDutyWeekId();
+        const record = this.data.duty_records.find(item => item._id === weekId);
+        const validItem = DUTY_SUPPLY_ITEMS.some(item => item.id === itemId);
+        const validStatus = DUTY_SUPPLY_STATUS_OPTIONS.some(option => option.value === status);
+        if (!validItem || !validStatus || !this._canEditDutyRecord(record)) {
+            this.showNotification('你沒有權限修改這份耗材清點', 'warning');
+            this.renderDuty();
+            return;
+        }
+
+        const previousValue = record.supplies?.[itemId];
+        if (!record.supplies) record.supplies = {};
+        record.supplies[itemId] = status;
+        try {
+            await updateDoc(doc(db, 'duty_records', weekId), {
+                [`supplies.${itemId}`]: status,
+                updated_at: new Date().toISOString()
+            });
+        } catch (error) {
+            record.supplies[itemId] = previousValue;
+            this.renderDuty();
+            this.showNotification('耗材狀態更新失敗：' + error.message, 'error');
         }
     },
 
@@ -687,7 +845,7 @@ export const dutyModule = {
             if (status) status.textContent = '已儲存';
         } catch (error) {
             if (status) status.textContent = '儲存失敗，請再試一次';
-            this.showNotification('備註儲存失敗：' + error.message, 'error');
+            this.showNotification('留言儲存失敗：' + error.message, 'error');
         }
     },
 
@@ -710,10 +868,23 @@ export const dutyModule = {
 
         // 檢查是否全部勾選
         const allCleaning = DUTY_CLEANING_TASKS.every(t => record.cleaning && record.cleaning[t.id]);
-        const allSupplies = DUTY_SUPPLY_ITEMS.every(t => record.supplies && record.supplies[t.id]);
+        const allSuppliesSelected = DUTY_SUPPLY_ITEMS.every(item => isDutySupplyStatusSelected(record.supplies?.[item.id]));
+        const pendingSupplies = DUTY_SUPPLY_ITEMS.filter(item => (
+            normalizeDutySupplyStatus(record.supplies?.[item.id]) === 'needs_order'
+        ));
+        const allSuppliesReady = DUTY_SUPPLY_ITEMS.every(item => isDutySupplyReadyForSubmit(record.supplies?.[item.id]));
 
-        if (!allCleaning || !allSupplies) {
-            this.showNotification('請先完成所有清潔與耗材清點項目', 'warning');
+        if (!allCleaning) {
+            this.showNotification('請先完成所有一般清潔項目', 'warning');
+            return;
+        }
+        if (!allSuppliesSelected) {
+            this.showNotification('請先選擇所有耗材的狀態', 'warning');
+            return;
+        }
+        if (!allSuppliesReady) {
+            const names = pendingSupplies.map(item => item.name).join('、');
+            this.showNotification(`仍有待叫貨品項：${names}。完成叫貨並改成「已叫貨」後才能提交。`, 'warning');
             return;
         }
 
@@ -779,7 +950,7 @@ export const dutyModule = {
                     <span class="close" onclick="app.closeModal('current-duty-alignment-modal')">&times;</span>
                 </div>
                 <div class="modal-body">
-                    <p class="modal-intro">請選擇本週真正輪到的人。儲存後會將此人設為新的輪值起點，並清除本週尚未提交的勾選與備註。完成提交後才會安排下一位；若未完成，則由同一人順延。</p>
+                    <p class="modal-intro">請選擇本週真正輪到的人。儲存後會將此人設為新的輪值起點，並清除本週尚未提交的清點狀態與留言。完成提交後才會安排下一位；若未完成，則由同一人順延。</p>
                     <div class="form-group">
                         <label for="current-duty-assignee">本週實際輪到的人</label>
                         <select id="current-duty-assignee">${options}</select>
