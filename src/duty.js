@@ -584,7 +584,7 @@ export const dutyModule = {
                     <div><strong>週期：</strong>${weekId} 起</div>
                     ${carryoverStatusHtml}
                     ${assignmentStatusHtml}
-                    <div><strong>完成後下一位：</strong>${nextPerson ? escapeDutyHtml(nextPerson.Name_Ch) : '-'}</div>
+                    <div><strong>完成後下一位：</strong>${nextPerson ? `${escapeDutyHtml(nextPerson.Name_Ch)}（${escapeDutyHtml(nextWeekId)} 起）` : '-'}</div>
                     ${nextAssignmentStatusHtml}
                 </div>
                 ${!submitted && !nextWeekRecord?.assignment_source?.includes('admin') ? '<p class="duty-rotation-help">若本週仍未提交，系統會保留原輪值順序，並由本週值日生順延至下一週。</p>' : ''}

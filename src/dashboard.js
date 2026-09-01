@@ -6,6 +6,7 @@
  */
 import { db, doc, setDoc, deleteDoc } from './firebase.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, DUTY_NOTES } from './constants.js';
+import { formatDutyHistoryRange } from './duty-history.js';
 import { isDutySupplyReadyForSubmit } from './duty-supplies.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -110,13 +111,14 @@ export const dashboardModule = {
                ...DUTY_SUPPLY_ITEMS.map(item => isDutySupplyReadyForSubmit(record.supplies?.[item.id]))].filter(Boolean).length
             : 0;
         const totalCount = DUTY_CLEANING_TASKS.length + DUTY_SUPPLY_ITEMS.length;
+        const weekId = record?._id || record?.week_start || this._getDutyWeekId();
+        const nextDate = new Date();
+        nextDate.setDate(nextDate.getDate() + 7);
+        const nextWeekId = this._getDutyWeekId(nextDate);
 
         let nextMember = null;
         let nextLabel = '完成後下一位';
         if (result?.roster?.length) {
-            const nextDate = new Date();
-            nextDate.setDate(nextDate.getDate() + 7);
-            const nextWeekId = this._getDutyWeekId(nextDate);
             const nextRecord = this.data.duty_records.find(item => item._id === nextWeekId);
             const nextId = nextRecord?.assigned_to || nextRecord?.scheduled_to;
             if (nextId && nextRecord?.assignment_source === 'admin') {
@@ -140,6 +142,8 @@ export const dashboardModule = {
             isCurrentUser,
             completedCount,
             totalCount,
+            weekId,
+            nextWeekId,
             nextMember,
             nextLabel,
             submitted: Boolean(record?.submitted)
@@ -272,7 +276,7 @@ export const dashboardModule = {
             <button type="button" class="overview-duty-primary" onclick="app.switchTab('duty')">
                 <span class="overview-duty-icon"><i class="ph ph-broom" aria-hidden="true"></i></span>
                 <span class="overview-duty-main">
-                    <span class="overview-duty-label">本週值日生</span>
+                    <span class="overview-duty-label">本週值日生 · ${escapeHtml(formatDutyHistoryRange(dutyData.weekId))}</span>
                     <span class="overview-duty-name-row"><strong>${escapeHtml(currentName)}</strong><span class="status-badge ${statusClass}">${statusLabel}</span></span>
                     <span class="overview-duty-progress">已完成 ${dutyData.completedCount}/${dutyData.totalCount} 項 · ${escapeHtml(dutyData.nextLabel)} ${escapeHtml(dutyData.nextMember?.Name_Ch || '尚未排定')}</span>
                     ${handoffText}
