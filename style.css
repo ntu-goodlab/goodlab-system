@@ -1246,6 +1246,7 @@ html, body {
 @media (max-width: 680px) {
     .member-directory-grid { grid-template-columns: 1fr; }
     .section-toolbar, .duty-card-header { align-items: stretch; flex-direction: column; }
+    .duty-card-header { gap: 12px; }
     .section-toolbar .btn, .toolbar-actions .btn { flex: 1; }
     .form-row-two { grid-template-columns: 1fr; gap: 0; }
     .routine-filter-tabs { width: 100%; }
