@@ -3,7 +3,7 @@
  * Phase 4：從 script.js 抽出人員管理相關邏輯。
  * 所有方法透過 mixin 混入 app 物件，因此使用 this. 存取共享狀態。
  */
-import { db, doc, setDoc, updateDoc, runTransaction } from './firebase.js';
+import { db, doc, setDoc, deleteDoc, updateDoc, writeBatch, runTransaction } from './firebase.js';
 import { formatDateForInput, calculateGrade } from './utils.js';
 import { showNotification, closeModal } from './ui.js';
 import {
@@ -491,14 +491,23 @@ export const membersModule = {
         ].filter(Boolean);
         
         try {
-            await updateDoc(doc(db, "members", id), {
+            const memberRef = doc(db, 'members', id);
+            const identityReset = {
                 Google_UID: null,
                 Google_Email: null,
                 Google_Display_Name: null,
                 Previous_Google_UIDs: [...new Set(previousGoogleUids)],
                 Previous_Google_Emails: [...new Set(previousGoogleEmails)],
                 Previous_Google_Display_Names: [...new Set(previousGoogleDisplayNames)]
-            });
+            };
+            if (member?.Role === 'Admin' && member.Google_UID) {
+                const batch = writeBatch(db);
+                batch.update(memberRef, identityReset);
+                batch.delete(doc(db, 'admins', member.Google_UID));
+                await batch.commit();
+            } else {
+                await updateDoc(memberRef, identityReset);
+            }
             document.getElementById('Bind_Status').value = "未綁定";
             document.getElementById('Google_Display_Name').value = '';
             document.getElementById('Google_Email').value = '';
@@ -515,6 +524,7 @@ export const membersModule = {
         const id = idInput.value.trim().toLowerCase();
         if (!id) { alert("請輸入學號"); return; }
         const isEditingExisting = idInput.disabled;
+        const existingMember = this.data.members.find(member => normalizeStudentId(member.Student_ID) === id) || null;
         const conflict = this.data.members.find(member => {
             const memberId = normalizeStudentId(member.Student_ID);
             if (isEditingExisting && memberId === id) return false;
@@ -540,7 +550,33 @@ export const membersModule = {
         btn.disabled = true;
 
         try {
-            await setDoc(doc(db, "members", payload.Student_ID), payload, { merge: true });
+            const memberRef = doc(db, 'members', payload.Student_ID);
+            const shouldRevokeAdmin = Boolean(
+                existingMember?.Google_UID
+                && existingMember.Role === 'Admin'
+                && payload.Role !== 'Admin'
+            );
+            if (shouldRevokeAdmin) {
+                const batch = writeBatch(db);
+                batch.set(memberRef, payload, { merge: true });
+                batch.delete(doc(db, 'admins', existingMember.Google_UID));
+                await batch.commit();
+            } else {
+                await setDoc(memberRef, payload, { merge: true });
+            }
+
+            if (existingMember?.Google_UID && payload.Role === 'Admin') {
+                const adminRef = doc(db, 'admins', existingMember.Google_UID);
+                try {
+                    await setDoc(adminRef, {
+                        student_id: payload.Student_ID,
+                        registered_at: new Date().toISOString()
+                    });
+                } catch (registryError) {
+                    console.warn('[GOODLAB] 成員已儲存，但 Admin registry 同步失敗：', registryError.code || registryError.message);
+                    this.showNotification('成員角色已儲存，但管理權限尚未同步；請先發布最新 firestore.rules。', 'warning', 8000);
+                }
+            }
             this.closeModal('member-modal');
         } catch (e) {
             this.showNotification("發生錯誤：" + e.message, 'error');

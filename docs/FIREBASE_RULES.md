@@ -19,7 +19,7 @@
 ## 發布前準備
 
 1. Firebase Console → Firestore Database → 資料。
-2. 確認 `admins/{Google UID}` 文件已存在，且文件 ID 是目前 Admin 的 Firebase Authentication UID。
+2. 至少確認目前操作發布的 Admin 已有 `admins/{Google UID}` 文件。發布本版規則後，其他已綁定且 `Role = Admin` 的成員會在下次登入時自動登記自己的 UID。
 3. `Email` 是學校通知信箱；登入用 Google 信箱與顯示名稱會另存為 `Google_Email`、`Google_Display_Name`，三者互不替代。
 4. 至少保留一個可用 Admin UID，避免發布後把自己鎖在管理功能之外。
 
@@ -56,4 +56,4 @@ firebase deploy --only firestore:rules
 7. 已被其他 Google UID 認領的學號不能再次綁定。
 8. Admin 的公告、行事、帳務、聘僱與維修管理：允許。
 
-若 Admin 操作全部被拒絕，先檢查 `admins` 文件 ID，而不是放寬規則。
+若 Admin 操作全部被拒絕，先確認已發布專案根目錄的最新 `firestore.rules`，再檢查該成員是否已綁定 Google 帳號且 `Role = Admin`。兩者正確時，網站會自動建立 `admins/{Google UID}`；不需手動複製 UID。

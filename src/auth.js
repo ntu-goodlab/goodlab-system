@@ -2,7 +2,7 @@
  * GOODLAB — 認證與權限模組
  * Phase 4：處理 Google 登入/登出、學號綁定、角色檢查與側邊欄 UI 控制。
  */
-import { auth, provider, db, doc, updateDoc, signInWithPopup, onAuthStateChanged, signOut } from './firebase.js';
+import { auth, provider, db, doc, getDoc, setDoc, updateDoc, signInWithPopup, onAuthStateChanged, signOut } from './firebase.js';
 import { showNotification, closeModal } from './ui.js';
 import { escapeHtml } from './utils.js';
 import { getMobileNavigationLayout } from './mobile-navigation.js';
@@ -11,6 +11,38 @@ import { normalizeStudentId } from './member-id-migration.js';
 export const authModule = {
 
     _googleIdentitySyncUid: null,
+    _adminRegistryUid: null,
+    _adminRegistryPromise: null,
+
+    _ensureAdminRegistry: function(member) {
+        const uid = this.currentUser?.uid;
+        if (!uid || member?.Role !== 'Admin' || member?.Google_UID !== uid) {
+            return Promise.reject(new Error('目前登入帳號與 Admin 成員資料不一致'));
+        }
+        if (this._adminRegistryUid === uid && this._adminRegistryPromise) {
+            return this._adminRegistryPromise;
+        }
+
+        const adminRef = doc(db, 'admins', uid);
+        const promise = (async () => {
+            const snapshot = await getDoc(adminRef);
+            if (snapshot.exists()) return;
+            await setDoc(adminRef, {
+                student_id: member.Student_ID,
+                registered_at: new Date().toISOString()
+            });
+        })();
+
+        this._adminRegistryUid = uid;
+        this._adminRegistryPromise = promise.catch(error => {
+            if (this._adminRegistryUid === uid) {
+                this._adminRegistryUid = null;
+                this._adminRegistryPromise = null;
+            }
+            throw error;
+        });
+        return this._adminRegistryPromise;
+    },
 
     // === 登入 ===
     login: async function() {
@@ -34,7 +66,11 @@ export const authModule = {
     setupAuthListener: function() {
         onAuthStateChanged(auth, (user) => {
             const previousUid = this.currentUser ? this.currentUser.uid : null;
-            if (!user || previousUid !== user.uid) this._googleIdentitySyncUid = null;
+            if (!user || previousUid !== user.uid) {
+                this._googleIdentitySyncUid = null;
+                this._adminRegistryUid = null;
+                this._adminRegistryPromise = null;
+            }
             this.currentUser = user;
             this.currentMember = null;
             this.currentRole = 'Guest';
@@ -53,7 +89,7 @@ export const authModule = {
     },
 
     // === 權限中控室 (解決非同步時間差) ===
-    checkUserRole: function() {
+    checkUserRole: async function() {
         const userInfo = document.getElementById('user-info');
         const btnLogin = document.getElementById('btn-login');
         const btnLogout = document.getElementById('btn-logout');
@@ -91,6 +127,26 @@ export const authModule = {
             const roleLabel = this.currentRole === 'Admin' ? '管理員' : '成員';
             if(userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${roleLabel}`;
             closeModal('bind-modal');
+
+            if (this.currentRole === 'Admin') {
+                const expectedUid = this.currentUser.uid;
+                if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · 正在確認管理權限`;
+                try {
+                    await this._ensureAdminRegistry(memberData);
+                } catch (error) {
+                    if (this.currentUser?.uid !== expectedUid) return;
+                    this.currentRole = 'User';
+                    this.syncRealtimeListeners('User');
+                    this.updateSidebarUI();
+                    this.showNotification('尚未建立 Admin 資料權限。請由系統管理員發布最新 firestore.rules，再重新整理頁面。', 'error', 10000);
+                    if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · 管理權限尚未啟用`;
+                    console.warn('[GOODLAB] Admin registry unavailable:', error.code || error.message);
+                    return;
+                }
+                if (this.currentUser?.uid !== expectedUid) return;
+                if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${roleLabel}`;
+            }
+
             this.syncRealtimeListeners(this.currentRole);
             const googleEmail = String(this.currentUser.email || '').trim().toLowerCase();
             const googleDisplayName = String(this.currentUser.displayName || '').trim();

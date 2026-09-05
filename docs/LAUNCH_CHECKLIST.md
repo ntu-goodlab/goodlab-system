@@ -12,7 +12,7 @@
 
 ## B. Firebase（發布網站前）
 
-- [ ] 確認 `admins/{你的 Firebase UID}` 文件存在
+- [ ] 確認發布規則所用 Admin 的 `admins/{Firebase UID}` 文件存在；其他已綁定 Admin 會在登入時自動登記
 - [ ] 確認成員的 `Email` 是正確的學校通知信箱（通常為學號@ntu.edu.tw）
 - [ ] 將專案根目錄 `firestore.rules` 完整貼到 Firestore Rules 並發布
 - [ ] 用 Admin 與一般成員各測一次：一般成員能載入公開公告／行事，但不能讀寫帳務、聘僱或維修紀錄

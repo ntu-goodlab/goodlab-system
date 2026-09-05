@@ -11,6 +11,19 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
+    function validAdminRegistryEntry(uid) {
+      let studentId = request.resource.data.student_id;
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.resource.data.keys().hasOnly(['student_id', 'registered_at'])
+        && request.resource.data.keys().hasAll(['student_id', 'registered_at'])
+        && studentId is string
+        && request.resource.data.registered_at is string
+        && exists(/databases/$(database)/documents/members/$(studentId))
+        && get(/databases/$(database)/documents/members/$(studentId)).data.Google_UID == uid
+        && get(/databases/$(database)/documents/members/$(studentId)).data.Role == 'Admin';
+    }
+
     function ownsMember(studentId) {
       return isSignedIn()
         && studentId is string
@@ -132,7 +145,12 @@ service cloud.firestore {
 
     match /admins/{uid} {
       allow read: if isSignedIn();
-      allow write: if false;
+      // 已由既有 Admin 設定角色、且完成 Google 綁定者，可安全登記自己的 UID。
+      // 一般成員無法自行把 members.Role 改成 Admin，因此不會藉此升權。
+      allow create: if validAdminRegistryEntry(uid)
+        && (isAdmin() || uid == request.auth.uid);
+      allow update: if isAdmin() && validAdminRegistryEntry(uid);
+      allow delete: if isAdmin();
     }
 
     match /instruments/{instrumentId} {
