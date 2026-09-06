@@ -7,6 +7,7 @@ import * as employmentTimeline from '../src/employment-timeline.js';
 import { employmentEditFingerprint } from '../src/employment-edit-state.js';
 import { applyEmploymentMonthDrafts } from '../src/employment-month-draft.js';
 import { employmentOverrideUpdates } from '../src/employment-access.js';
+import { resolveAdminAccess } from '../src/admin-access.js';
 
 function loadModule(file, name, context) {
     const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8')
@@ -15,6 +16,75 @@ function loadModule(file, name, context) {
     vm.runInNewContext(source, context);
     return context[name];
 }
+
+test('管理員判斷相容 UID 舊登錄，但不接受角色、快取、錯誤學號或其他帳號作為授權', () => {
+    const member = { Google_UID: 'owner', Student_ID: 'student', Role: 'Admin' };
+    const old = { loaded: true, entry: {} };
+    assert.equal(resolveAdminAccess(member, 'owner', old), 'legacy-check');
+    assert.equal(resolveAdminAccess(member, 'owner', old, 'pending'), 'legacy-check');
+    assert.equal(resolveAdminAccess(member, 'owner', old, 'allowed'), 'authorized');
+    assert.equal(resolveAdminAccess(member, 'owner', old, 'denied'), 'legacy-denied');
+    assert.equal(resolveAdminAccess(member, 'owner', old, 'error'), 'lookup-error');
+    assert.equal(resolveAdminAccess(member, 'other', old, 'allowed'), 'user');
+    assert.equal(resolveAdminAccess({ ...member, Role: 'User' }, 'owner', old, 'allowed'), 'user');
+    assert.equal(resolveAdminAccess(member, 'owner', { loaded: true, entry: null }, 'allowed'), 'missing');
+    assert.equal(resolveAdminAccess(member, 'owner', { ...old, error: 'unavailable' }, 'allowed'), 'lookup-error');
+    assert.equal(resolveAdminAccess(member, 'owner', { ...old, entry: { student_id: 'wrong' } }, 'allowed'), 'mismatch');
+    assert.equal(resolveAdminAccess(member, 'owner', { ...old, entry: { student_id: 'student' } }), 'authorized');
+});
+
+function legacyAdminAuthFixture() {
+    const listeners = [];
+    const notifications = [];
+    const app = loadModule('auth.js', 'authModule', {
+        resolveAdminAccess, db: {}, doc: (_db, ...parts) => parts.join('/'),
+        onSnapshot: (ref, options, next, error) => {
+            const listener = { ref, options, next, error, cancelled: false };
+            listeners.push(listener);
+            return () => { listener.cancelled = true; };
+        },
+        document: { getElementById: () => null, querySelector: () => null }, closeModal() {}
+    });
+    Object.assign(app, {
+        currentUser: { uid: 'owner' }, membersLoaded: true,
+        data: { members: [{ Google_UID: 'owner', Student_ID: 'student', Name_Ch: '管理員', Role: 'Admin' }] },
+        _adminRegistryLoaded: true, _adminRegistry: {},
+        syncRealtimeListeners() {}, updateSidebarUI() {}, renderOverview() {},
+        getAllowedTabs: () => [], routeFromHash() {},
+        showNotification: message => notifications.push(message)
+    });
+    return { app, listeners, notifications };
+}
+
+test('舊管理員等待伺服器確認才解鎖，權限被拒絕時降回成員且顯示精確原因', async () => {
+    const { app, listeners, notifications } = legacyAdminAuthFixture();
+    await app.checkUserRole();
+    assert.equal(app.currentRole, 'User');
+    assert.equal(notifications.length, 0);
+    assert.equal(listeners[0].ref, 'accounting/goodlab-admin-permission-check');
+    listeners[0].next({ metadata: { fromCache: true } });
+    assert.equal(app.currentRole, 'User');
+    listeners[0].next({ metadata: { fromCache: false } });
+    assert.equal(app.currentRole, 'Admin');
+    await app.checkUserRole();
+    assert.equal(listeners.length, 1);
+    listeners[0].error({ code: 'permission-denied' });
+    assert.equal(app.currentRole, 'User');
+    assert.match(notifications[0], /資料庫規則未授予/);
+});
+
+test('舊管理員查核的延遲回應不污染新帳號或已停止的監聽', async () => {
+    const { app, listeners } = legacyAdminAuthFixture();
+    await app.checkUserRole();
+    app.currentUser = { uid: 'another' };
+    listeners[0].next({ metadata: { fromCache: false } });
+    assert.equal(app.currentRole, 'User');
+    app.stopLegacyAdminProbe();
+    assert.equal(listeners[0].cancelled, true);
+    app.currentUser = { uid: 'owner' };
+    listeners[0].next({ metadata: { fromCache: false } });
+    assert.equal(app._legacyAdminAccess, 'idle');
+});
 
 test('舊頁面的自助綁定入口不再嘗試寫入 UID', async () => {
     const notifications = [];

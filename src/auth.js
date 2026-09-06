@@ -6,6 +6,7 @@ import { auth, provider, db, doc, onSnapshot, updateDoc, signInWithPopup, onAuth
 import { showNotification, closeModal } from './ui.js';
 import { escapeHtml } from './utils.js';
 import { getMobileNavigationLayout } from './mobile-navigation.js';
+import { resolveAdminAccess } from './admin-access.js';
 
 export const authModule = {
 
@@ -14,24 +15,65 @@ export const authModule = {
     _adminRegistry: null,
     _adminRegistryLoaded: false,
     _adminAccessWarning: null,
+    _adminRegistryError: null,
+    _legacyAdminAccess: 'idle',
+    _legacyAdminProbeKey: null,
+    _legacyAdminUnsubscribe: null,
+
+    stopLegacyAdminProbe: function() {
+        this._legacyAdminUnsubscribe?.();
+        this._legacyAdminUnsubscribe = null;
+        this._legacyAdminProbeKey = null;
+        this._legacyAdminAccess = 'idle';
+    },
+
+    watchLegacyAdminPermission: function(uid, studentId) {
+        const key = `${uid}:${studentId}`;
+        if (this._legacyAdminProbeKey === key) return;
+        this.stopLegacyAdminProbe();
+        this._legacyAdminProbeKey = key;
+        this._legacyAdminAccess = 'pending';
+        // This reserved document need not exist. A server read is allowed only
+        // when the deployed accounting rules recognize this UID as an admin.
+        // No document is created and no financial data is used or displayed.
+        this._legacyAdminUnsubscribe = onSnapshot(
+            doc(db, 'accounting', 'goodlab-admin-permission-check'),
+            { includeMetadataChanges: true },
+            snapshot => {
+                if (this.currentUser?.uid !== uid || this._legacyAdminProbeKey !== key) return;
+                if (snapshot.metadata.fromCache) return;
+                this._legacyAdminAccess = 'allowed';
+                this.checkUserRole();
+            },
+            error => {
+                if (this.currentUser?.uid !== uid || this._legacyAdminProbeKey !== key) return;
+                this._legacyAdminAccess = error.code === 'permission-denied' ? 'denied' : 'error';
+                this.checkUserRole();
+            }
+        );
+    },
 
     // Authentication only reads authorization; it must never grant it.
     watchOwnAdminRegistry: function(uid) {
         this._adminRegistryUnsubscribe?.();
+        this.stopLegacyAdminProbe();
         this._adminRegistryUnsubscribe = null;
         this._adminRegistry = null;
         this._adminRegistryLoaded = false;
         this._adminAccessWarning = null;
+        this._adminRegistryError = null;
         if (!uid) return;
         this._adminRegistryUnsubscribe = onSnapshot(doc(db, 'admins', uid), snapshot => {
             if (this.currentUser?.uid !== uid) return;
             this._adminRegistry = snapshot.exists() ? snapshot.data() : null;
             this._adminRegistryLoaded = true;
+            this._adminRegistryError = null;
             this.checkUserRole();
         }, error => {
             if (this.currentUser?.uid !== uid) return;
             this._adminRegistry = null;
             this._adminRegistryLoaded = true;
+            this._adminRegistryError = error.code || 'unknown';
             console.warn('[GOODLAB] 無法確認管理授權：', error.code || error.message);
             this.checkUserRole();
         });
@@ -132,9 +174,17 @@ export const authModule = {
 
         if (memberData) {
             // 已綁定成功 (User / Admin)
-            const adminAuthorized = memberData.Role === 'Admin'
-                && this._adminRegistryLoaded
-                && this._adminRegistry?.student_id === memberData.Student_ID;
+            const access = resolveAdminAccess(memberData, this.currentUser.uid, {
+                loaded: this._adminRegistryLoaded,
+                entry: this._adminRegistry,
+                error: this._adminRegistryError
+            }, this._legacyAdminProbeKey === `${this.currentUser.uid}:${memberData.Student_ID}` ? this._legacyAdminAccess : 'idle');
+            if (access === 'legacy-check') {
+                this.watchLegacyAdminPermission(this.currentUser.uid, memberData.Student_ID);
+            } else if (Object.hasOwn(this._adminRegistry || {}, 'student_id') || !this._adminRegistry || memberData.Role !== 'Admin') {
+                this.stopLegacyAdminProbe();
+            }
+            const adminAuthorized = access === 'authorized';
             this.currentRole = adminAuthorized ? 'Admin' : 'User';
             this.currentMember = memberData; // Phase 5: 儲存完整 member 資料
             const roleLabel = this.currentRole === 'Admin' ? '管理員' : '成員';
@@ -142,10 +192,18 @@ export const authModule = {
             closeModal('bind-modal');
 
             if (memberData.Role === 'Admin' && !adminAuthorized) {
-                if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${this._adminRegistryLoaded ? '管理權限尚未啟用' : '正在確認管理權限'}`;
-                if (this._adminRegistryLoaded && this._adminAccessWarning !== memberData.Student_ID) {
-                    this._adminAccessWarning = memberData.Student_ID;
-                    this.showNotification('管理權限尚未啟用。請既有管理員核對你的 Google 綁定帳號，再重新儲存成員的 Admin 權限。', 'warning', 10000);
+                const pending = ['checking', 'legacy-check'].includes(access);
+                if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${pending ? '正在確認管理權限' : '管理權限需確認'}`;
+                const warningKey = `${memberData.Student_ID}:${access}`;
+                if (!pending && this._adminAccessWarning !== warningKey) {
+                    this._adminAccessWarning = warningKey;
+                    const messages = {
+                        'lookup-error': '暫時無法向伺服器確認管理權限，請檢查連線後重新整理；這不表示你的 Admin 身分已被撤銷。',
+                        missing: '成員資料是 Admin，但目前登入帳號沒有對應的管理員登錄。請專案管理者核對登入帳號與管理員登錄。',
+                        mismatch: '管理員登錄的學號與目前成員資料不一致，請專案管理者核對登錄資料。',
+                        'legacy-denied': '找到舊版管理員登錄，但目前資料庫規則未授予此帳號行政資料權限，請專案管理者核對登錄與線上規則。'
+                    };
+                    this.showNotification(messages[access] || '無法確認管理權限，請重新整理後再試。', 'warning', 10000);
                 }
             } else {
                 this._adminAccessWarning = null;
@@ -166,6 +224,7 @@ export const authModule = {
                     .catch(error => console.warn('[GOODLAB] 無法同步 Google 帳號資料：', error.code || error.message));
             }
         } else {
+            this.stopLegacyAdminProbe();
             // 已登入但未綁定學號 ➔ 視為 Guest
             this.currentRole = 'Guest';
             this.currentMember = null;

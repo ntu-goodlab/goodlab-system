@@ -2,7 +2,7 @@ import { before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, getDoc, deleteDoc, runTransaction, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, getDoc, getDocFromServer, deleteDoc, runTransaction, writeBatch } from 'firebase/firestore';
 import { saveMemberAccess, unbindMemberAccess, deleteMemberAccess, syncMemberAdminRegistry } from '../src/member-access.js';
 import { writeInventoryImportChunk } from '../src/inventory-import-access.js';
 import { parseInventoryRows } from '../src/inventory-import.js';
@@ -48,6 +48,36 @@ test('未登入、普通成員、殘留白名單都無法存取行政集合', as
             await assertFails(deleteDoc(doc(db, collection, 'test')));
         }
     }
+});
+
+test('舊 UID 白名單可透過伺服器唯讀查核；無登錄者拒絕，新規則也不因舊格式而放行', async () => {
+    const candidateRules = await readFile(new URL('../firestore.rules', import.meta.url), 'utf8');
+    const config = { projectId, firestore: { host: '127.0.0.1', port: 8085 } };
+    const legacyRules = `rules_version = '2';
+        service cloud.firestore { match /databases/{database}/documents {
+            function isAdmin() { return request.auth != null
+                && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+            match /admins/{uid} { allow read: if request.auth != null; allow write: if false; }
+            match /accounting/{id} { allow read: if isAdmin(); allow write: if false; }
+        } }`;
+    await env.withSecurityRulesDisabled(async ctx => setDoc(doc(ctx.firestore(), 'admins/admin'), {}));
+    let legacy;
+    try {
+        legacy = await initializeTestEnvironment({ ...config, firestore: { ...config.firestore, rules: legacyRules } });
+        const admin = legacy.authenticatedContext('admin').firestore();
+        const probe = doc(admin, 'accounting/goodlab-admin-permission-check');
+        const snapshot = await assertSucceeds(getDocFromServer(probe));
+        assert.equal(snapshot.exists(), false);
+        assert.equal(snapshot.metadata.fromCache, false);
+        await assertFails(getDocFromServer(doc(legacy.authenticatedContext('user').firestore(), probe.path)));
+        await assertFails(setDoc(probe, { value: 'must not write' }));
+        await assertFails(setDoc(doc(legacy.authenticatedContext('user').firestore(), 'admins/user'), {}));
+    } finally {
+        await legacy?.cleanup();
+        const restored = await initializeTestEnvironment({ ...config, firestore: { ...config.firestore, rules: candidateRules } });
+        await restored.cleanup();
+    }
+    await assertFails(getDocFromServer(doc(authDb('admin'), 'accounting/goodlab-admin-permission-check')));
 });
 
 test('維修紀錄登入後唯讀：普通成員可查看但不可新增、修改或刪除', async () => {

@@ -3,6 +3,7 @@ import { getDutyWeekId } from '../src/duty-schedule.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS } from '../src/constants.js';
 const isAdmin = new URLSearchParams(location.search).get('role') === 'admin';
 const isUnbound = new URLSearchParams(location.search).get('role') === 'guest';
+const legacyAdmin = new URLSearchParams(location.search).get('legacyAdmin') === '1';
 const uid = isUnbound ? 'preview-unbound' : isAdmin ? 'preview-admin' : 'preview-user';
 const user = { uid, displayName: '預覽成員', email: `${uid}@example.test` };
 const members = [
@@ -16,7 +17,7 @@ const members = [
 const week = getDutyWeekId();
 const fixtures = {
     members,
-    admins: isAdmin ? [{ _id: uid, student_id: 'preview-admin-a' }] : [],
+    admins: isAdmin ? [legacyAdmin ? { _id: uid } : { _id: uid, student_id: 'preview-admin-a' }] : [],
     inventory: [{ Property_ID: '_SETTINGS_', IsOpen: false },
         { Property_ID: 'P001-A01-00', Name: '薄膜厚度量測儀', Location: '量測區', Personal_Remark: '靠窗第二張桌子', Status: 'Pending', Brand: 'Demo', Model: 'T-100' },
         { Property_ID: 'P002-A01-00', Name: '真空幫浦', Location: '機房', Status: 'Checked', Checked_By: 'preview-user', Checked_By_Student_ID: 'preview-a' }],
@@ -60,7 +61,8 @@ document.addEventListener('click', event => {
     }
     if (event.target.id === 'preview-refresh') [...refreshers].forEach(refresh => refresh());
 });
-export function onSnapshot(source, next) {
+export function onSnapshot(source, optionsOrNext, maybeNext) {
+    const next = typeof optionsOrNext === 'function' ? optionsOrNext : maybeNext;
     let live = true;
     const refresh = () => {
         if (!live) return;
@@ -68,8 +70,8 @@ export function onSnapshot(source, next) {
         let rows = fixtures[name] || [];
         if (source.filters) rows = rows.filter(row => source.filters.every(filter => row[filter.field] === filter.value));
         const snapshots = rows.map(row => ({ id: row._id || row.Student_ID || row.Property_ID || row.Instrument_ID || row.Txn_ID,
-            data: () => ({ ...row }), exists: () => true }));
-        next(source.isDoc ? snapshots.find(item => item.id === id) || { exists: () => false, data: () => undefined } : { docs: snapshots });
+            data: () => ({ ...row }), exists: () => true, metadata: { fromCache: false } }));
+        next(source.isDoc ? snapshots.find(item => item.id === id) || { exists: () => false, data: () => undefined, metadata: { fromCache: false } } : { docs: snapshots });
     };
     refreshers.add(refresh);
     queueMicrotask(refresh);
