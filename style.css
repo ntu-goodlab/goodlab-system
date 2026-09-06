@@ -1231,7 +1231,69 @@ html, body {
 .routine-category-label.is-activity { color: #5b21b6; background: #ede9fe; }
 .routine-category-label.is-admin { color: #92400e; background: #fef3c7; }
 .routine-overview-item-name { display: block; margin-top: 5px; font-weight: 650; }
-.log-date-cell { min-width: 128px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* 維修紀錄：固定短欄，將空間留給問題與處理內容。 */
+#page-logs { container: maintenance / inline-size; }
+#page-logs .logs-toolbar { align-items: center; gap: 16px; margin-bottom: 12px; }
+#page-logs .logs-toolbar .filters { flex: 1; gap: 12px; }
+#search-log { width: min(100%, 360px); min-height: 44px; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; background: white; color: var(--text-main); font: inherit; }
+#page-logs .filter-group { flex-shrink: 0; }
+#page-logs .filter-chip { min-height: 44px; white-space: nowrap; }
+#page-logs .logs-toolbar > .btn { flex-shrink: 0; white-space: nowrap; }
+.logs-result-count { margin: 0 0 12px; color: var(--text-muted); font-size: .82rem; }
+.logs-table { table-layout: fixed; }
+.logs-table th, .logs-table td { padding: 14px 12px; }
+.logs-table th { font-size: .8rem; }
+.logs-table td { font-size: .9rem; line-height: 1.65; overflow-wrap: anywhere; }
+.logs-table tr:last-child td { border-bottom: 0; }
+.logs-table .log-status-cell { width: 96px; text-align: center; }
+.logs-table .log-urgency-cell { width: 64px; text-align: center; }
+.logs-table .log-report-cell { width: 132px; }
+.logs-table .log-instrument-cell { width: 12%; font-weight: 600; }
+.logs-table .log-solution-cell { width: 23%; color: #475569; }
+.logs-table .log-actions-cell { width: 82px; text-align: center; }
+.log-status { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 0 6px; border: 0; background: transparent; font: inherit; font-size: .85rem; font-weight: 500; white-space: nowrap; }
+.log-status.is-open { color: #b45309; }
+.log-status.is-closed { color: #15803d; }
+button.log-status { cursor: pointer; border-radius: 6px; }
+button.log-status:hover { background: #f1f5f9; }
+.log-status-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: currentColor; }
+.log-urgency { color: #475569; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.log-urgency.is-medium { color: #a16207; }
+.log-urgency.is-high { color: #b91c1c; }
+.log-urgency > span { color: var(--text-muted); font-size: .75rem; font-weight: 400; }
+.log-report-date { display: block; white-space: nowrap; font-size: .82rem; font-variant-numeric: tabular-nums; }
+.log-reporter { display: block; margin-top: 3px; color: var(--text-muted); font-size: .8rem; }
+.log-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-unfilled { color: var(--text-muted); font-size: .82rem; }
+.logs-table .log-edit-button { min-width: 58px; min-height: 44px; padding: 6px 10px; white-space: nowrap; }
+.log-mobile-label { display: none; }
+@container maintenance (max-width: 860px) {
+    #page-logs .logs-toolbar { flex-direction: row; align-items: flex-start; }
+    #page-logs .logs-toolbar .filters { justify-content: flex-start; }
+    #page-logs .logs-toolbar > .btn { width: auto; min-height: 44px; padding: 10px 14px; }
+    .logs-table-container { border: 0; box-shadow: none; background: transparent; overflow: visible; }
+    .logs-table, .logs-table tbody { display: block; }
+    .logs-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .logs-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'instrument status' 'report urgency' 'problem problem' 'solution solution' 'actions actions'; gap: 10px 16px; margin-bottom: 12px; padding: 16px 20px; border: 1px solid var(--border-color); border-radius: 8px; background: white; }
+    .logs-table tbody td[class] { display: block; width: auto; min-width: 0; padding: 0 !important; border: 0; background: transparent; white-space: normal; }
+    .logs-table .log-status-cell { grid-area: status; align-self: start; text-align: right; }
+    .logs-table .log-instrument-cell { grid-area: instrument; align-self: center; font-size: 1rem; }
+    .logs-table tbody td.log-report-cell { grid-area: report; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+    .log-reporter { margin-top: 0; }
+    .logs-table .log-urgency-cell { grid-area: urgency; text-align: right; }
+    .logs-table tbody td.log-problem-cell { grid-area: problem; padding-top: 10px !important; border-top: 1px solid var(--border-color); }
+    .logs-table .log-solution-cell { grid-area: solution; }
+    .logs-table .log-actions-cell { grid-area: actions; text-align: right; }
+    .log-mobile-label { display: block; margin-bottom: 3px; color: var(--text-muted); font-size: .75rem; font-weight: 500; }
+    .logs-table .empty-state { grid-column: 1 / -1; }
+}
+@container maintenance (max-width: 480px) {
+    #page-logs .logs-toolbar { flex-wrap: wrap; gap: 10px; }
+    #page-logs .logs-toolbar .filters { flex-basis: 100%; }
+    #page-logs .logs-toolbar .filters > #search-log { width: 100%; flex: 1 0 100%; }
+    #page-logs .logs-toolbar > .btn { margin-left: auto; }
+    .logs-table tbody tr { padding: 12px 16px; gap: 8px 12px; }
+}
 .routine-name-link { color: var(--primary); font-weight: 600; text-decoration: none; }
 .routine-name-link i { display: inline-block; margin-left: 5px; font-size: .9rem; vertical-align: -1px; }
 .routine-name-link:hover { text-decoration: underline; }

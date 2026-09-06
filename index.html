@@ -122,29 +122,29 @@
                 </section>
 
                 <section id="page-logs" class="page-section">
-                    <div class="action-bar">
+                    <div class="action-bar logs-toolbar">
                         <div class="filters">
-                            <input type="text" id="search-log" aria-label="搜尋儀器、維修問題或解決方案" placeholder="搜尋儀器、問題或解決方案..." oninput="app.renderLogs()">
-                            <div class="filter-group">
-                                <button class="btn-filter filter-chip" data-val="All" onclick="app.setLogFilter('All')">全部</button>
-                                <button class="btn-filter filter-chip active" data-val="Open" onclick="app.setLogFilter('Open')">待處理</button>
-                                <button class="btn-filter filter-chip" data-val="Closed" onclick="app.setLogFilter('Closed')">已結案</button>
+                            <input type="search" id="search-log" aria-label="搜尋儀器、維修問題或解決方案" placeholder="搜尋儀器、問題或解決方案" oninput="app.renderLogs()">
+                            <div class="filter-group" role="group" aria-label="維修狀態">
+                                <button class="btn-filter filter-chip" aria-pressed="false" data-val="All" onclick="app.setLogFilter('All')">全部</button>
+                                <button class="btn-filter filter-chip active" aria-pressed="true" data-val="Open" onclick="app.setLogFilter('Open')">待處理</button>
+                                <button class="btn-filter filter-chip" aria-pressed="false" data-val="Closed" onclick="app.setLogFilter('Closed')">已結案</button>
                             </div>
                         </div>
                         <button onclick="app.openLogModal()" class="btn btn-primary admin-only">回報問題</button>
                     </div>
-                    <div class="table-container">
-                        <table>
+                    <p id="log-result-count" class="logs-result-count" role="status" aria-live="polite"></p>
+                    <div class="table-container logs-table-container">
+                        <table class="logs-table" aria-label="維修紀錄">
                             <thead>
                                 <tr>
-                                    <th style="width:80px; text-align:center;">狀態</th>
-                                    <th style="width:60px; text-align:center;">緊急</th>
-                                    <th class="log-date-cell" style="width:128px;">日期</th>
-                                    <th style="width:150px;">儀器名稱</th>
-                                    <th class="hide-mobile">問題描述</th>
-                                    <th class="hide-mobile">解決方案</th>
-                                    <th class="hide-mobile" style="width:100px;">回報人</th>
-                                    <th style="width:80px; text-align:center;">操作</th>
+                                    <th scope="col" class="log-status-cell">狀態</th>
+                                    <th scope="col" class="log-urgency-cell">緊急度</th>
+                                    <th scope="col" class="log-report-cell">回報日期／人員</th>
+                                    <th scope="col" class="log-instrument-cell">儀器名稱</th>
+                                    <th scope="col" class="log-problem-cell">問題描述</th>
+                                    <th scope="col" class="log-solution-cell">處理進度／解決方案</th>
+                                    <th scope="col" class="log-actions-cell">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="log-tbody"></tbody>

@@ -31,7 +31,12 @@ const fixtures = {
         { _id: 'notice-1', kind: 'announcement', title: '共用設備使用提醒', content: '使用完畢請清潔桌面，若設備異常請聯絡負責人。', published: true, priority: 'normal' }],
     routines: [{ _id: 'routine-1', name: '確認下週 Meeting 資料', next_due: '2026-09-10', category: '例行工作', interval_value: 1, interval_unit: 'month', visible_to_users: true }],
     accounting: [{ Txn_ID: 'A001', Type: 'Income', Amount: 12000, Payer: 'Fund', Fund_Source: 'Bank', Date: '2026-09-01', Description: '期初餘額' }],
-    logs: [{ Log_ID: 'L001', Instrument_ID: 'I001', Problem_Desc: '示範：量測讀值不穩定，已暫停使用', Solution: '等待廠商檢查訊號線', Owner_ID: 'preview-a', Status: 'Open', Urgency: 3, Date_Reported: '2026-09-03' }],
+    logs: [
+        { Log_ID: 'L001', Instrument_ID: 'I001', Problem_Desc: '示範：量測讀值不穩定，已暫停使用', Solution: '等待廠商檢查訊號線', Owner_ID: 'preview-a', Status: 'Open', Urgency: 3, Date_Reported: '2026-09-03' },
+        { Log_ID: 'L002', Instrument_ID: '區域環境', Problem_Desc: '示範：需請廠商確認量測區新增獨立電路的配置，預計安裝在純水設備旁。施工前請先與設備負責人確認動線及停機時間。', Solution: '', Owner_ID: 'preview-admin-a', Status: 'Open', Urgency: 2, Date_Reported: '2026-09-02' },
+        { Log_ID: 'L003', Instrument_ID: 'I001', Problem_Desc: '示範：開機後出現異常聲響，請暫停使用並張貼告示。', Solution: '已聯絡廠商，等待安排到場檢查。\n檢修期間請使用其他設備。', Owner_ID: 'preview-b', Status: 'Open', Urgency: 5, Date_Reported: '2026-09-01' },
+        { Log_ID: 'L004', Instrument_ID: '區域環境', Problem_Desc: '示範：回收區照明故障', Solution: '已更換燈管並確認照明正常。', Owner_ID: 'preview-a', Status: 'Closed', Urgency: 1, Date_Reported: '2026-08-28', Date_Resolved: '2026-08-29' }
+    ],
     projects: [
         { _id: 'project-a', name: '薄膜材料研究（示範）', project_number: 'DEMO-01', project_code: 'A01', start_month: '2026-08', end_month: '2027-07', status: 'active', color_key: 'blue', semester_budgets: { '115-1': { available: 90000 } } },
         { _id: 'project-b', name: '設備維護計畫（示範）', project_number: 'DEMO-02', project_code: 'B02', start_month: '2026-08', end_month: '2027-01', status: 'active', color_key: 'teal', semester_budgets: { '115-1': { available: 10000 } } },

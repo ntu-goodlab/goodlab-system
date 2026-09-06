@@ -20,7 +20,8 @@ export const logsModule = {
 
     // === 篩選器 UI 更新 ===
     updateFilterUI: function() {
-        document.querySelectorAll('.filter-chip').forEach(btn => {
+        document.querySelectorAll('#page-logs .filter-chip').forEach(btn => {
+            btn.setAttribute('aria-pressed', String(btn.dataset.val === this.logFilterStatus));
             if (btn.dataset.val === this.logFilterStatus) {
                 btn.classList.add('active');
             } else {
@@ -45,13 +46,13 @@ export const logsModule = {
         const tbody = document.getElementById('log-tbody');
         if (!tbody) return;
 
-        // ★ 加入防火牆攔截：User 與 Guest 都不能看維修紀錄
+        // 維修紀錄僅提供管理員與已登入成員查看。
         if (!['Admin', 'User'].includes(this.currentRole)) {
             tbody.innerHTML = this.guestGuardHtml;
             return;
         }
         const searchEl = document.getElementById('search-log');
-        const term = searchEl ? searchEl.value.toLowerCase() : ''; // ★ 安全防呆
+        const term = searchEl ? searchEl.value.trim().toLowerCase() : '';
         const statusFilter = this.logFilterStatus;
         const isAdmin = this.currentRole === 'Admin';
         // [Phase 2] 移除對不存在的 #filter-log-location 的死參照
@@ -87,40 +88,35 @@ export const logsModule = {
             return valA > valB ? dir : (valA < valB ? -dir : 0);
         });
 
+        const countEl = document.getElementById('log-result-count');
+        if (countEl) countEl.textContent = `${{ All: '全部', Open: '待處理', Closed: '已結案' }[statusFilter] || '全部'} · ${filtered.length} 筆${term ? '搜尋結果' : '紀錄'}`;
+        const actionId = row => escapeHtml(JSON.stringify(String(row.Log_ID || row.id || '')));
+
         UI.renderTable({
             containerId: 'log-tbody',
             data: filtered,
             columns: [
                 { 
-                    width: '80px', align: 'center', 
+                    className: 'log-status-cell',
                     render: row => {
                         const isClosed = row.Status === 'Closed';
-                        const color = isClosed ? 'var(--success)' : 'var(--danger)';
                         const titleText = isClosed ? '已結案' : '待處理';
-                        const cursor = isAdmin ? 'cursor: pointer;' : 'cursor: default;';
-                        
-                        return `<span style="color: ${color}; ${cursor}" 
-                                      onclick="event.stopPropagation(); ${isAdmin ? `app.quickResolve('${row.Log_ID}')` : ''}" 
-                                      title="${isAdmin ? '點擊切換狀態 (' + titleText + ')' : titleText}">
-                                    <i class="ph-fill ph-circle" aria-hidden="true"></i> ${titleText}
-                                </span>`;
+                        const content = `<span class="log-status-dot" aria-hidden="true"></span>${titleText}`;
+                        const className = `log-status ${isClosed ? 'is-closed' : 'is-open'}`;
+                        return isAdmin
+                            ? `<button type="button" class="${className}" onclick="event.stopPropagation(); app.quickResolve(${actionId(row)})" aria-label="${isClosed ? '編輯結案紀錄' : '處理維修紀錄'}：${escapeHtml(row.Problem_Desc)}">${content}</button>`
+                            : `<span class="${className}">${content}</span>`;
                     }
                 },
-                { width: '80px', align: 'center', render: row => `<span style="color:${this.getUrgencyColor(row.Urgency)}; font-weight:bold;">${row.Urgency}</span>` },
-                { 
-                    width: '128px',
-                    className: 'log-date-cell',
-                    // ★ 日期格式化：只取前面的 YYYY-MM-DD
-                    render: row => row.Date_Reported ? row.Date_Reported.split('T')[0].split(' ')[0] : '-' 
-                },
-                { width: '150px', render: row => {
+                { className: 'log-urgency-cell', render: row => `<span class="log-urgency ${row.Urgency >= 5 ? 'is-high' : row.Urgency >= 3 ? 'is-medium' : ''}" aria-label="緊急度 ${escapeHtml(row.Urgency || '—')}，最高 5 級">${escapeHtml(row.Urgency || '—')}<span> / 5</span></span>` },
+                { className: 'log-report-cell', render: row => `<span class="log-report-date">${escapeHtml(row.Date_Reported ? row.Date_Reported.split('T')[0].split(' ')[0] : '—')}</span><span class="log-reporter">${escapeHtml(this.getMemberName(row.Owner_ID || row.Reporter_ID || row.Reporter))}</span>` },
+                { className: 'log-instrument-cell', render: row => {
                     const inst = this.data.instruments.find(i => i.Instrument_ID === row.Instrument_ID);
-                    return escapeHtml(inst ? inst.Name : '-');
+                    return escapeHtml(inst ? inst.Name : (row.Instrument_ID || '未指定儀器'));
                 }},
-                { className: 'hide-mobile', render: row => escapeHtml(row.Problem_Desc) },
-                { className: 'hide-mobile', render: row => `<span style="color:var(--success);">${escapeHtml(row.Solution || '-')}</span>` },
-                { width: '100px', className: 'hide-mobile', render: row => escapeHtml(this.getMemberName(row.Owner_ID || row.Reporter_ID || row.Reporter)) },
-                { width: '80px', align: 'center', render: row => `<button type="button" onclick="event.stopPropagation(); app.openLogModal('${escapeHtml(row.Log_ID)}')" class="btn btn-sm btn-secondary" aria-label="${isAdmin ? '編輯' : '查看'}維修紀錄：${escapeHtml(row.Problem_Desc)}">${isAdmin ? '編輯' : '查看'}</button>` }
+                { className: 'log-problem-cell', render: row => `<span class="log-mobile-label">問題描述</span><div class="log-description">${escapeHtml(row.Problem_Desc || '未填寫問題描述')}</div>` },
+                { className: 'log-solution-cell', render: row => `<span class="log-mobile-label">處理進度／解決方案</span><div class="log-description ${row.Solution ? '' : 'log-unfilled'}">${escapeHtml(row.Solution || '尚未填寫')}</div>` },
+                { className: 'log-actions-cell', render: row => `<button type="button" onclick="event.stopPropagation(); app.openLogModal(${actionId(row)})" class="btn btn-sm btn-secondary log-edit-button" aria-label="${isAdmin ? '編輯' : '查看'}維修紀錄：${escapeHtml(row.Problem_Desc)}">${isAdmin ? '編輯' : '查看'}</button>` }
             ],
             emptyMessage: "目前沒有任何符合的維修紀錄"
         });
