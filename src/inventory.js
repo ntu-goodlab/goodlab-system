@@ -7,6 +7,8 @@ import { db, doc, setDoc, updateDoc, deleteDoc, writeBatch, arrayUnion } from '.
 import { LOCATIONS } from './constants.js';
 import { UI } from '../shared.js';
 import { generateId, escapeHtml } from './utils.js';
+import { parseInventoryRows } from './inventory-import.js';
+import { writeInventoryImportChunk } from './inventory-import-access.js';
 
 export const inventoryModule = {
 
@@ -24,6 +26,14 @@ export const inventoryModule = {
     // ================= Excel 兩階段匯入：階段一 (智慧預覽解析) =================
 
     previewExcel: function(event) {
+        if (this.inventoryImportRunning) {
+            this.showNotification('匯入仍在進行，請等待目前批次完成。', 'warning');
+            return;
+        }
+        if (this.currentRole !== 'Admin' || this.realtimeLoadState.inventory !== 'loaded') {
+            this.showNotification('請等財產資料載入完成後再匯入。', 'warning');
+            return;
+        }
         const file = event.target.files[0];
         if (!file) return;
 
@@ -47,69 +57,19 @@ export const inventoryModule = {
                 // 使用找到的正確標題列 (headerIndex) 開始解析為 JSON
                 const rows = XLSX.utils.sheet_to_json(firstSheet, { range: headerIndex, defval: "" });
 
-                const existingMap = new Map();
-                this.data.inventory.forEach(item => existingMap.set(item.Property_ID, item));
-
-                this.tempImportPayloads = []; 
+                this.tempImportPayloads = parseInventoryRows(rows, this.data.inventory);
+                this.inventoryImportJob = null;
+                if (!this.tempImportPayloads.length) throw new Error('找不到可匯入的資料，請確認標題列與必要欄位。');
+                const added = this.tempImportPayloads.filter(item => item._isNew).length;
                 const tbody = document.getElementById('import-preview-tbody');
-                tbody.innerHTML = ''; 
-
-                rows.forEach(row => {
-                    // 如果這行沒有財物編號或校號，直接跳過
-                    if (!row['財物編號'] || !row['校號']) return;
-
-                    const propId = `${String(row['財物編號']).trim()}-${String(row['校號']).trim()}-${row['附件'] ? String(row['附件']).trim() : '00'}`;
-                    const existingItem = existingMap.get(propId);
-
-                    const payload = {
-                        Property_ID: propId,
-                        Name: row['財物名稱'] ? String(row['財物名稱']).trim() : '',
-                        Brand: row['廠牌'] ? String(row['廠牌']).trim() : '',
-                        Model: (row['型式'] || row['形式']) ? String(row['型式'] || row['形式']).trim() : '',
-                        Price: row['單價'] ? Number(String(row['單價']).replace(/,/g, '')) : 0,
-                        Acquire_Date: row['取得日期'] ? String(row['取得日期']).trim() : '',
-                        Lifespan: row['年限'] ? String(row['年限']).trim() : '',
-                        Add_No: row['增加單號'] ? String(row['增加單號']).trim() : '',
-                        Manager: row['管理人'] ? String(row['管理人']).trim() : '',
-                        Original_Location: row['存置地點'] ? String(row['存置地點']).trim() : '',
-                        Category: row['分類'] ? String(row['分類']).trim() : '',
-                        Scrap_Status: row['報銷狀態'] ? String(row['報銷狀態']).trim() : '',
-                        System_Remark: row['保管組備註'] ? String(row['保管組備註']).trim() : '',
-                        
-                        // 處理盤點狀態與自訂區域
-                        Status: (row['已盤得\n請打v'] && String(row['已盤得\n請打v']).toLowerCase() === 'v') ? 'Checked' : 'Pending',
-                        Location: row['實驗區域'] ? String(row['實驗區域']).trim() : '', 
-                        Personal_Remark: row['細項位置'] ? String(row['細項位置']).trim() : '' 
-                    };
-
-                    // 若系統內已有紀錄，比對是否為新增或更新
-                    let actionText = '全新建立';
-                    let actionColor = 'var(--success)';
-
-                    if (existingItem) {
-                        actionText = '同步更新';
-                        actionColor = 'var(--primary)';
-                    } 
-
-                    this.tempImportPayloads.push(payload);
-
-                    // 畫出預覽列
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td style="padding: 6px 8px; border-bottom: 1px solid var(--border-color); font-family: monospace;">${payload.Property_ID}</td>
-                        <td style="padding: 6px 8px; border-bottom: 1px solid var(--border-color);">${payload.Name}</td>
-                        <td style="padding: 6px 8px; border-bottom: 1px solid var(--border-color); font-size: 0.85rem;">${payload.Location || payload.Original_Location || '-'}</td>
-                        <td style="padding: 6px 8px; border-bottom: 1px solid var(--border-color); font-weight: bold; color: ${actionColor}; font-size: 0.85rem;">${actionText}</td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-
-                document.getElementById('preview-count').innerText = this.tempImportPayloads.length;
-                UI.openModal({ modalId: 'import-preview-modal', title: '全量同步預覽 (將刪除不在清單內的項目)' });
-
+                tbody.innerHTML = this.tempImportPayloads.map(payload => `<tr><td>${escapeHtml(payload.Property_ID)}</td><td>${escapeHtml(payload.Name)}</td><td>${escapeHtml(payload.Original_Location || '-')}</td><td>${payload._isNew ? '新增' : '更新學校資料'}</td></tr>`).join('');
+                document.getElementById('preview-count').textContent = this.tempImportPayloads.length;
+                document.getElementById('import-summary').textContent = `新增 ${added} 筆、更新 ${this.tempImportPayloads.length - added} 筆。既有位置、備註及盤點狀態會保留；不刪除其他財產。`;
+                document.getElementById('import-progress').textContent = '';
+                UI.openModal({ modalId: 'import-preview-modal', title: '匯入學校財產清冊' });
             } catch (error) {
                 console.error("Excel 解析失敗:", error);
-                this.showNotification("檔案解析失敗，請確認是否為符合格式的 Excel 檔。", 'error');
+                this.showNotification("檔案格式不正確，請確認必要欄位、重複編號與金額。", 'error');
             } finally {
                 event.target.value = ''; // 清空 input 檔案，讓下次選同一個檔案也能觸發
             }
@@ -120,79 +80,36 @@ export const inventoryModule = {
     // ================= Excel 兩階段匯入：階段二 (全量同步寫入) =================
 
     confirmImport: async function() {
+        if (this.inventoryImportRunning || this.currentRole !== 'Admin') return;
         if (!this.tempImportPayloads || this.tempImportPayloads.length === 0) return;
+        this.inventoryImportRunning = true;
 
         const btn = document.getElementById('btn-confirm-import');
-        btn.innerText = "執行全量同步中...";
+        btn.innerText = "匯入中…";
         btn.disabled = true;
 
+        const progress = document.getElementById('import-progress');
+        const job = this.inventoryImportJob ||= { id: generateId('IMPORT'), completed: 0 };
         try {
-            // ★ Phase 3：備份機制 — 匯入前先將現有資料複製到 inventory_archive
-            const archiveId = 'ARCHIVE_' + new Date().toISOString().replace(/[:.]/g, '-');
-            const archiveBatches = [];
-            let archiveBatch = writeBatch(db);
-            let archiveCount = 0;
-            this.data.inventory.forEach(item => {
-                if (item.Property_ID === '_SETTINGS_') return;
-                archiveBatch.set(doc(db, 'inventory_archive', archiveId + '_' + item.Property_ID), {
-                    ...item,
-                    _Archive_ID: archiveId,
-                    _Archived_At: new Date().toISOString()
-                });
-                archiveCount++;
-                if (archiveCount % 400 === 0) {
-                    archiveBatches.push(archiveBatch.commit());
-                    archiveBatch = writeBatch(db);
-                }
-            });
-            if (archiveCount % 400 !== 0) archiveBatches.push(archiveBatch.commit());
-            await Promise.all(archiveBatches);
-            console.log(`[Phase 3] 已備份 ${archiveCount} 筆產編至 inventory_archive (${archiveId})`);
-
-            const batchArray = [];
-            let currentBatch = writeBatch(db);
-            let count = 0;
-
-            // 1. 找出要刪除的項目：資料庫有但 Excel 沒出現的
-            const importedIDs = new Set(this.tempImportPayloads.map(p => p.Property_ID));
-            const itemsToDelete = this.data.inventory.filter(item => 
-                item.Property_ID !== '_SETTINGS_' && !importedIDs.has(item.Property_ID)
-            );
-
-            // 執行刪除
-            itemsToDelete.forEach(item => {
-                currentBatch.delete(doc(db, "inventory", item.Property_ID));
-                count++;
-                if (count % 400 === 0) {
-                    batchArray.push(currentBatch.commit());
-                    currentBatch = writeBatch(db);
-                }
-            });
-
-            // 2. 執行新增與更新
-            this.tempImportPayloads.forEach(payload => {
-                currentBatch.set(doc(db, "inventory", payload.Property_ID), payload, { merge: true });
-                count++;
-                if (count % 400 === 0) {
-                    batchArray.push(currentBatch.commit());
-                    currentBatch = writeBatch(db);
-                }
-            });
-
-            if (count % 400 !== 0) batchArray.push(currentBatch.commit());
-            await Promise.all(batchArray);
-
-            this.showNotification(`同步成功：更新/新增 ${this.tempImportPayloads.length} 筆，刪除 ${itemsToDelete.length} 筆。`, 'success');
-            app.closeModal('import-preview-modal');
+            while (job.completed < this.tempImportPayloads.length) {
+                const chunk = this.tempImportPayloads.slice(job.completed, job.completed + 100);
+                await writeInventoryImportChunk(db, chunk, job.id);
+                job.completed += chunk.length;
+                progress.textContent = `已完成 ${job.completed} / ${this.tempImportPayloads.length} 筆`;
+            }
+            this.showNotification(`匯入完成：${job.completed} 筆。既有自訂資訊已保留。`, 'success');
             this.tempImportPayloads = [];
-        } catch (e) {
-            this.showNotification("同步失敗: " + e.message, 'error');
+            this.inventoryImportJob = null;
+            this.closeModal('import-preview-modal');
+        } catch (error) {
+            progress.textContent = `已完成 ${job.completed} 筆；其餘尚未確認完成。保留此視窗並按「繼續匯入」可重試，已完成部分不會撤回。備份批號：${job.id}`;
+            this.showNotification('匯入中斷：' + error.message, 'error');
         } finally {
-            btn.innerText = "確認並寫入系統";
+            this.inventoryImportRunning = false;
+            btn.textContent = this.inventoryImportJob ? '繼續匯入' : '確認匯入';
             btn.disabled = false;
         }
     },
-
     // ================= 產編排序 =================
 
     sortInventory: function(key) {
@@ -365,12 +282,7 @@ export const inventoryModule = {
                             checkerName = checker?.Name_Ch || '已盤點';
                         }
                         
-                        return `<div style="text-align:center; ${canEdit ? 'cursor: pointer;' : 'cursor: default; opacity: 0.8;'}" 
-                                     onclick="${canEdit ? `event.stopPropagation(); app.toggleInvStatus('${row.Property_ID}', '${row.Status}')` : 'event.stopPropagation();'}"
-                                     title="${canEdit ? '點擊切換 (' + titleText + ')' : titleText + ' (已鎖定)'}">
-                                    <div style="line-height: 1;"><i class="ph-fill ph-circle" style="color: ${color}; font-size: 1.3rem;"></i></div>
-                                    ${checkerName ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">${checkerName}</div>` : ''}
-                                </div>`;
+                        return `<button type="button" class="inventory-check ${isChecked ? 'is-checked' : ''}" data-inv-status="${escapeHtml(row.Status)}" data-prop-id="${escapeHtml(row.Property_ID)}" ${canEdit ? '' : 'disabled'}><span>${titleText}</span><small>${canEdit ? (isChecked ? '撤銷盤點' : '標記已盤點') : '盤點已關閉'}</small>${checkerName ? `<small>${escapeHtml(checkerName)}</small>` : ''}</button>`;
                     }
                 },
                 { width: '150px', className: 'inventory-desktop-only', render: row => `<strong style="font-family: monospace;">${escapeHtml(row.Property_ID)}</strong>` },
@@ -426,7 +338,10 @@ export const inventoryModule = {
                 }
             ],
             emptyMessage: "目前沒有盤點資料！",
-            onRowClick: (rowData) => { if (canEdit) app.toggleInvStatus(rowData.Property_ID, rowData.Status); }
+            onRowClick: null
+        });
+        tbody.querySelectorAll('[data-prop-id][data-inv-status]').forEach(button => {
+            button.addEventListener('click', () => this.toggleInvStatus(button.dataset.propId, button.dataset.invStatus));
         });
     }, 
 

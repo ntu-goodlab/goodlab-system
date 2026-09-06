@@ -8,6 +8,7 @@ import { db, doc, setDoc, deleteDoc } from './firebase.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, DUTY_NOTES } from './constants.js';
 import { formatDutyHistoryRange } from './duty-history.js';
 import { isDutySupplyReadyForSubmit } from './duty-supplies.js';
+import { captureFormDrafts, restoreFormDrafts } from './form-draft.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -152,6 +153,11 @@ export const dashboardModule = {
 
     _getOverviewTasks: function(dutyData) {
         const tasks = [];
+        if (dutyData.isCurrentUser && !dutyData.submitted) tasks.push({
+            icon: 'ph-broom', title: '本週輪到你值日',
+            detail: `已完成 ${dutyData.completedCount} / ${dutyData.totalCount} 項`,
+            action: "app.switchTab('duty')", label: '繼續填寫', tone: 'warning'
+        });
         const settings = this.data.inventory.find(item => item.Property_ID === '_SETTINGS_');
         const inventoryOpen = Boolean(settings?.IsOpen);
 
@@ -161,7 +167,7 @@ export const dashboardModule = {
             ).length;
             tasks.push({
                 icon: 'ph-list-checks',
-                title: '產編清點目前開放中',
+                title: '財產盤點目前開放中',
                 detail: pendingCount ? `尚有 ${pendingCount} 筆未完成` : '目前項目皆已完成',
                 action: "app.switchTab('inventory')",
                 label: '前往清點',
@@ -215,8 +221,8 @@ export const dashboardModule = {
                 ${meeting.content ? `<p>${escapeHtml(meeting.content).replace(/\n/g, '<br>')}</p>` : ''}
                 ${safeUrl(meeting.link_url) ? `<a class="overview-inline-link" href="${safeUrl(meeting.link_url)}" target="_blank" rel="noopener noreferrer"><i class="ph ph-arrow-square-out" aria-hidden="true"></i>${escapeHtml(meeting.link_label || '開啟 Meeting 連結')}</a>` : ''}
             </div>
-            ${isAdmin ? '<div class="overview-bulletin-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="app.editMeetingInfo()"><i class="ph ph-pencil-simple" aria-hidden="true"></i>編輯</button></div>' : ''}
-        </article>${isAdmin && this.overviewMeetingEditorOpen ? this._renderMeetingEditor(meeting) : ''}` : '';
+            ${isAdmin ? '<div class="overview-bulletin-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="app.editMeetingInfo()"><i class="ph ph-pencil-simple" aria-hidden="true"></i>編輯 Meeting</button></div>' : ''}
+        </article>` : '';
 
         const noticeHtml = notices.map(item => {
             const visibilityBadges = isAdmin
@@ -233,8 +239,8 @@ export const dashboardModule = {
                     ${safeUrl(item.link_url) ? `<a class="overview-inline-link" href="${safeUrl(item.link_url)}" target="_blank" rel="noopener noreferrer"><i class="ph ph-arrow-square-out" aria-hidden="true"></i>${escapeHtml(item.link_label || '開啟相關連結')}</a>` : ''}
                 </div>
             </div>
-            ${isAdmin ? `<div class="overview-bulletin-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="app.editOverviewNotice('${escapeHtml(item._id)}')"><i class="ph ph-pencil-simple" aria-hidden="true"></i>編輯</button></div>` : ''}
-        </article>${isAdmin && this.overviewNoticeEditId === item._id ? this._renderNoticeEditor(item) : ''}`;
+            ${isAdmin ? `<div class="overview-bulletin-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="app.editOverviewNotice('${escapeHtml(item._id)}')"><i class="ph ph-pencil-simple" aria-hidden="true"></i>編輯公告</button></div>` : ''}
+        </article>`;
         }).join('');
 
         const emptyHtml = !meetingHtml && !noticeHtml
@@ -244,9 +250,9 @@ export const dashboardModule = {
         return `<section class="overview-panel" aria-labelledby="overview-bulletin-heading">
             <div class="overview-panel-header">
                 <div><h3 id="overview-bulletin-heading">實驗室公告</h3><p>包含本學期 Meeting 與近期通知</p></div>
-                ${isAdmin ? '<button type="button" class="btn btn-primary btn-sm" onclick="app.openOverviewNoticeComposer()"><i class="ph ph-plus" aria-hidden="true"></i>新增公告</button>' : ''}
+                ${isAdmin ? '<div class="toolbar-actions"><button type="button" class="btn btn-secondary btn-sm" onclick="app.switchTab(&quot;routine&quot;)">管理行事</button><button type="button" class="btn btn-primary btn-sm" onclick="app.openOverviewNoticeComposer()"><i class="ph ph-plus" aria-hidden="true"></i>新增公告</button></div>' : ''}
             </div>
-            ${isAdmin && this.overviewEditorOpen ? this._renderNoticeEditor({}) : ''}
+
             <div class="overview-bulletin-list">${meetingHtml}${noticeHtml}${emptyHtml}</div>
         </section>`;
     },
@@ -433,7 +439,7 @@ export const dashboardModule = {
             <div class="overview-panel-header"><div><h3 id="overview-links-heading">常用入口</h3><p>快速進入常用工作與資料</p></div></div>
             <div class="overview-shortcuts">
                 <button type="button" onclick="app.switchTab('duty')"><i class="ph ph-broom" aria-hidden="true"></i><span><strong>值日生工作</strong><small>清潔與耗材清點</small></span></button>
-                <button type="button" onclick="app.switchTab('inventory')"><i class="ph ph-list-checks" aria-hidden="true"></i><span><strong>產編清點</strong><small>查看或進行盤點</small></span></button>
+                <button type="button" onclick="app.switchTab('logs')"><i class="ph ph-wrench" aria-hidden="true"></i><span><strong>維修紀錄</strong><small>查看故障與處理進度</small></span></button>
                 <button type="button" onclick="app.switchTab('instruments')"><i class="ph ph-microscope" aria-hidden="true"></i><span><strong>儀器設備</strong><small>查詢儀器資料</small></span></button>
                 ${vendorResource ? `<a href="${safeUrl(vendorResource.url)}" target="_blank" rel="noopener noreferrer"><i class="ph ph-address-book" aria-hidden="true"></i><span><strong>廠商聯絡資料</strong><small>${escapeHtml(vendorResource.label)}</small></span></a>` : ''}
             </div>
@@ -441,7 +447,7 @@ export const dashboardModule = {
     },
 
     _renderMeetingEditor: function(meeting) {
-        return `<section class="overview-inline-editor" aria-labelledby="meeting-editor-heading">
+        return `<section class="overview-inline-editor" data-draft-key="meeting" aria-labelledby="meeting-editor-heading">
             <div class="overview-editor-heading"><div><h4 id="meeting-editor-heading">編輯本學期 Meeting</h4><p>變更會直接顯示在這張資訊卡。</p></div></div>
             <div class="overview-editor-grid">
                 <div class="form-group"><label for="meeting-title">標題</label><input id="meeting-title" type="text" value="${escapeHtml(meeting.title || '本學期 Meeting')}"></div>
@@ -462,20 +468,21 @@ export const dashboardModule = {
             .map(routine => `<option value="${escapeHtml(routine._id)}" ${editing.routine_id === routine._id ? 'selected' : ''}>${escapeHtml(routine.name || '未命名行事')}${routine.next_due ? `｜${escapeHtml(routine.next_due)}` : ''}</option>`)
             .join('');
 
-        return `<section class="overview-inline-editor ${isEditing ? 'is-editing' : 'is-new'}" aria-labelledby="notice-editor-heading">
+        return `<section class="overview-inline-editor ${isEditing ? 'is-editing' : 'is-new'}" data-draft-key="notice-${escapeHtml(editing._id || 'new')}" aria-labelledby="notice-editor-heading">
             <div class="overview-editor-heading"><div><h4 id="notice-editor-heading">${isEditing ? '編輯公告' : '新增公告'}</h4><p>可選擇一項實驗室行事；日期更新後，公告會同步顯示最新日期。</p></div></div>
             <div class="overview-editor-grid">
                 <div class="form-group overview-editor-wide"><label for="notice-title">標題</label><input id="notice-title" type="text" value="${escapeHtml(editing.title || '')}"></div>
                 <div class="form-group overview-editor-wide"><label for="notice-content">內容</label><textarea id="notice-content" rows="4">${escapeHtml(editing.content || '')}</textarea></div>
+            </div><label class="overview-check"><input id="notice-published" type="checkbox" ${editing.published !== false ? 'checked' : ''}>儲存後顯示給一般成員</label>
+            <details class="editor-options"><summary>連結、置頂與下架設定（選填）</summary><div class="overview-editor-grid">
                 <div class="form-group"><label for="notice-priority">重要程度</label><select id="notice-priority"><option value="normal" ${editing.priority !== 'important' ? 'selected' : ''}>一般</option><option value="important" ${editing.priority === 'important' ? 'selected' : ''}>重要</option></select></div>
                 <div class="form-group"><label for="notice-expires">下架日期（選填）</label><input id="notice-expires" type="date" value="${escapeHtml(editing.expires_on || '')}"></div>
                 <div class="form-group overview-editor-wide"><label for="notice-routine">連結實驗室行事（選填）</label><select id="notice-routine"><option value="">不連結行事</option>${routineOptions}</select></div>
                 <div class="form-group"><label for="notice-link-label">連結文字（選填）</label><input id="notice-link-label" type="text" value="${escapeHtml(editing.link_label || '')}"></div>
                 <div class="form-group"><label for="notice-link-url">連結網址（選填）</label><input id="notice-link-url" type="url" value="${escapeHtml(editing.link_url || '')}"></div>
                 <label class="overview-check"><input id="notice-pinned" type="checkbox" ${editing.pinned ? 'checked' : ''}>置頂顯示</label>
-                <label class="overview-check"><input id="notice-published" type="checkbox" ${editing.published !== false ? 'checked' : ''}>發布給一般成員</label>
             </div>
-            <div id="overview-notice-error" class="form-error" role="alert"></div>
+            </details><div id="overview-notice-error" class="form-error" role="alert"></div>
             <div class="overview-editor-actions">
                 ${isEditing ? `<button type="button" class="btn btn-secondary btn-icon-danger overview-delete-action" onclick="app.deleteOverviewNotice('${escapeHtml(editing._id)}')"><i class="ph ph-trash" aria-hidden="true"></i>刪除公告</button>` : ''}
                 <span class="overview-editor-action-spacer"></span>
@@ -488,6 +495,7 @@ export const dashboardModule = {
     renderOverview: function() {
         const container = document.getElementById('overview-content');
         if (!container || !this.currentMember) return;
+        const drafts = captureFormDrafts(container);
 
         const isAdmin = this.currentRole === 'Admin';
         const dutyData = this._getOverviewDutyData();
@@ -500,12 +508,13 @@ export const dashboardModule = {
                 ${this._renderStatusStrip(dutyData, true, accounting, openLogs)}
                 ${this._renderOperationsOverview()}
                 ${this._renderBulletins(true)}`;
+            restoreFormDrafts(container, drafts);
             return;
         }
 
         container.innerHTML = `
-            ${this._renderStatusStrip(dutyData, false)}
             ${this._renderOverviewTasks(tasks)}
+            ${dutyData.isCurrentUser && !dutyData.submitted ? '' : this._renderStatusStrip(dutyData, false)}
             ${this._renderBulletins(false)}
             ${this._renderRoutineSummary(false)}
             ${this._renderQuickLinks()}`;
@@ -520,8 +529,7 @@ export const dashboardModule = {
         this.overviewEditorOpen = true;
         this.overviewMeetingEditorOpen = false;
         this.overviewNoticeEditId = null;
-        this.renderOverview();
-        document.getElementById('notice-title')?.focus();
+        this._showOverviewEditor('新增公告', this._renderNoticeEditor({}), 'cancelOverviewNoticeEdit');
     },
 
     editMeetingInfo: function() {
@@ -529,11 +537,21 @@ export const dashboardModule = {
         this.overviewMeetingEditorOpen = true;
         this.overviewEditorOpen = false;
         this.overviewNoticeEditId = null;
-        this.renderOverview();
-        document.getElementById('meeting-title')?.focus();
+        const meeting = this.data.bulletins.find(item => item._id === 'meeting') || {};
+        this._showOverviewEditor('編輯 Meeting', this._renderMeetingEditor(meeting), 'cancelMeetingInfoEdit');
+    },
+
+    _showOverviewEditor: function(title, content, cancelAction) {
+        document.getElementById('bulletin-editor-modal')?.remove();
+        const modal = document.createElement('div');
+        modal.id = 'bulletin-editor-modal';
+        modal.className = 'modal';
+        modal.innerHTML = `<div class="modal-content bulletin-editor-dialog"><div class="modal-header"><h3>${title}</h3><button type="button" class="close" aria-label="關閉編輯" onclick="app.${cancelAction}()">&times;</button></div><div class="modal-body">${content}</div></div>`;
+        document.body.appendChild(modal);
     },
 
     cancelMeetingInfoEdit: function() {
+        this.closeModal('bulletin-editor-modal');
         this.overviewMeetingEditorOpen = false;
         this.renderOverview();
     },
@@ -543,11 +561,12 @@ export const dashboardModule = {
         this.overviewNoticeEditId = id;
         this.overviewEditorOpen = false;
         this.overviewMeetingEditorOpen = false;
-        this.renderOverview();
-        document.getElementById('notice-title')?.focus();
+        const notice = this.data.bulletins.find(item => item._id === id);
+        if (notice) this._showOverviewEditor('編輯公告', this._renderNoticeEditor(notice), 'cancelOverviewNoticeEdit');
     },
 
     cancelOverviewNoticeEdit: function() {
+        this.closeModal('bulletin-editor-modal');
         this.overviewNoticeEditId = null;
         this.overviewEditorOpen = false;
         this.renderOverview();
@@ -575,6 +594,8 @@ export const dashboardModule = {
         try {
             await setDoc(doc(db, 'bulletins', 'meeting'), payload, { merge: true });
             this.overviewMeetingEditorOpen = false;
+            this.closeModal('bulletin-editor-modal');
+            this.renderOverview();
             this.showNotification('Meeting 資訊已儲存', 'success');
         } catch (error) {
             this.showNotification('Meeting 儲存失敗：' + error.message, 'error');
@@ -620,6 +641,8 @@ export const dashboardModule = {
             await setDoc(doc(db, 'bulletins', id), payload, { merge: true });
             this.overviewNoticeEditId = null;
             this.overviewEditorOpen = false;
+            this.closeModal('bulletin-editor-modal');
+            this.renderOverview();
             this.showNotification(existing ? '公告已更新' : '公告已新增', 'success');
         } catch (error) {
             this.showNotification('公告儲存失敗：' + error.message, 'error');
@@ -634,6 +657,8 @@ export const dashboardModule = {
             await deleteDoc(doc(db, 'bulletins', id));
             if (this.overviewNoticeEditId === id) this.overviewNoticeEditId = null;
             this.overviewEditorOpen = false;
+            this.closeModal('bulletin-editor-modal');
+            this.renderOverview();
             this.showNotification('公告已刪除', 'success');
         } catch (error) {
             this.showNotification('公告刪除失敗：' + error.message, 'error');

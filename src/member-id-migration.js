@@ -151,7 +151,9 @@ export function createMemberIdMigrationPlan(data, oldId, newId) {
         groups,
         issues,
         affectedDocuments: operations.length,
-        totalWrites: operations.length + 2
+        // A bound member also updates or removes one administrator registry entry.
+        totalWrites: operations.length + 2 + (data?.members?.some(member =>
+            sameStudentId(member.Student_ID, sourceId) && member.Google_UID) ? 1 : 0)
     };
 }
 

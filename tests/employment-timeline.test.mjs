@@ -41,6 +41,13 @@ test('零元或未聘僱月份會切斷時間區段', () => {
     ]);
 });
 
+test('申報金額模式保留零元月份的編輯入口，但不延伸到未聘僱月份', () => {
+    const result = buildScheduleSegments({ '2026-08': 6000, '2026-09': 0, '2026-10': 6000 }, months, { includeZero: true });
+    assert.equal(result.length, 1);
+    assert.deepEqual(result[0].months.map(item => item.amount), [6000, 0, 6000]);
+    assert.equal(result[0].endIndex, 2);
+});
+
 test('未設定色票的既有計畫會取得穩定顏色', () => {
     const project = { _id: 'PRJ_123', name: '工研院計畫' };
     assert.equal(resolveProjectColorKey(project), resolveProjectColorKey(project));

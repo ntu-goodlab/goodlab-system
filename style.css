@@ -122,10 +122,25 @@ button { touch-action: manipulation; }
     transition: 0.2s;
 }
 .nav-item:hover { color: white; background: rgba(255,255,255,0.05); }
-.nav-item.active { color: white; background: rgba(37, 99, 235, 0.95); font-weight: 600; box-shadow: inset 3px 0 0 #93c5fd; }
+.nav-item.active { color: white; background: #263750; font-weight: 600; box-shadow: inset 3px 0 0 #93c5fd; }
+
+.data-health { padding: 12px 16px; margin-bottom: 20px; background: #fff7ed; border-left: 3px solid var(--warning); }
+.data-health[hidden] { display: none; }
+.data-health > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.inventory-check { min-height: 56px; min-width: 100px; padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 6px; background: white; color: var(--text-main); cursor: pointer; }
+.inventory-check span, .inventory-check small { display: block; }
+.inventory-check small { color: var(--text-muted); font-size: 12px; }
+.inventory-check.is-checked { border-color: #a7cbbc; background: #f0f8f4; color: var(--success); }
+.inventory-check:disabled { cursor: default; }
+.instrument-status { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; white-space: nowrap; }
+.instrument-contact-mobile { display: none; }
+.duty-submit-summary { color: var(--text-muted); padding: 12px 0; line-height: 1.7; }
+.preview-banner { position: sticky; top: 0; z-index: 4000; padding: 8px 16px; background: #fff4ce; color: #4a3712; font-size: 13px; }
+.preview-banner a { color: inherit; text-decoration: underline; }
 
 .main-content {
     flex: 1;
+    min-width: 0;
     margin-left: var(--sidebar-width);
     display: flex;
     flex-direction: column;
@@ -1022,17 +1037,24 @@ html, body {
 .vendor-copy-button:hover, .vendor-copy-button:active { background: rgba(255,255,255,0.16); }
 .duty-resource-link {
     min-height: 44px; display: inline-flex; align-items: center; gap: 7px; margin-top: 10px;
-    padding: 8px 12px; border: 1px solid #bfdbfe; border-radius: 8px;
-    color: var(--primary); background: #eff6ff; font-weight: 600; text-decoration: none;
+    padding: 4px 0; color: var(--primary); font-weight: 500; text-decoration: underline; text-underline-offset: 4px;
 }
-.duty-resource-link:hover { background: #dbeafe; }
+.duty-resource-link:hover { color: var(--text-main); }
 .duty-resource-link:focus-visible { outline: 3px solid rgba(37,99,235,0.24); outline-offset: 2px; }
+.duty-reference { margin: 28px 0 20px; padding: 0 4px; }
+.duty-reference h3 { margin: 0 0 8px; font-size: 1rem; }
+.duty-reference-list { margin: 0; }
 .duty-note-item {
-    margin-bottom: 12px; padding: 10px 14px; border-left: 3px solid var(--primary);
-    border-radius: 8px; background: white;
+    display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px;
+    padding: 16px 0; border-bottom: 1px solid var(--border-color);
 }
-.duty-note-title { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; font-weight: 600; }
-.duty-note-title i { flex: 0 0 auto; color: var(--primary); font-size: 1.05rem; }
+.duty-note-item:last-child { border-bottom: 0; }
+.duty-note-item dt { font-size: .87rem; font-weight: 600; line-height: 1.7; }
+.duty-note-item dd { margin: 0; color: var(--text-muted); font-size: .87rem; line-height: 1.8; }
+.duty-note-item dd .duty-resource-link { display: flex; width: fit-content; margin-top: 2px; }
+@media (max-width: 640px) {
+    .duty-note-item { grid-template-columns: 1fr; gap: 5px; padding: 14px 0; }
+}
 .duty-rotation-help { margin: 12px 0 0; color: var(--text-muted); font-size: 0.82rem; line-height: 1.6; }
 .duty-carryover-loading, .duty-carryover-error {
     display: flex; align-items: center; gap: 12px; min-height: 88px;
@@ -1631,11 +1653,10 @@ button.employment-span-value:hover { background: rgba(255, 255, 255, .4); }
 .employment-record-remark { margin-top: 8px; color: var(--text-muted); font-size: .8rem; }
 .employment-person-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 
-.employment-person-editor { border-color: #60a5fa; }
-.employment-person-select { max-width: 520px; }
+.employment-person-editor { border-color: var(--border-color); }
+.employment-person-select { max-width: 360px; }
 .employment-person-editor-summary {
-    margin: 12px 0 16px; padding: 14px; border: 1px solid #bfdbfe;
-    border-radius: var(--radius-lg); background: #eff6ff;
+    margin: 16px 0 4px; padding: 12px 0; border-top: 1px solid var(--border-color);
 }
 .employment-person-editor-summary-heading {
     margin-bottom: 10px; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
@@ -1643,28 +1664,103 @@ button.employment-span-value:hover { background: rgba(255, 255, 255, .4); }
 .employment-person-editor-summary-heading > span { color: #1e3a8a; font-size: .8rem; font-weight: 600; }
 .employment-person-editor-summary-heading > strong { color: #1e40af; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
 .employment-person-editor-summary-heading > small { color: var(--text-muted); }
-.employment-draft-list { display: grid; gap: 14px; }
-.employment-draft-card {
-    position: relative; min-width: 0; padding: 16px; border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg); background: white;
-}
-.employment-draft-card > legend { padding: 0 8px; font-weight: 700; }
-.employment-draft-card-actions { display: flex; justify-content: flex-end; margin: -6px 0 10px; }
-.employment-draft-preview {
-    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px;
-}
-.employment-draft-preview > div {
-    padding: 10px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md);
-    display: flex; flex-direction: column; gap: 3px;
-}
-.employment-draft-preview > div.warning { border-color: #fbbf24; background: #fffbeb; color: #92400e; }
-.employment-draft-preview span { color: var(--text-muted); font-size: .72rem; }
-.employment-draft-preview strong { font-size: .84rem; font-variant-numeric: tabular-nums; }
 .employment-draft-deleted {
     padding: 12px 14px; border: 1px dashed #f87171; border-radius: var(--radius-md);
     background: #fef2f2; color: #991b1b; display: flex; align-items: center; justify-content: space-between; gap: 12px;
 }
 .employment-draft-deleted i { margin-right: 6px; }
+
+.employment-sheet-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px; }
+.employment-sheet { width: 100%; min-width: 774px; table-layout: fixed; border-collapse: collapse; font-size: .84rem; }
+.employment-sheet .sheet-col-number { width: 30px; }
+.employment-sheet .sheet-col-project { width: auto; }
+.employment-sheet .sheet-col-date { width: 146px; }
+.employment-sheet .sheet-col-amount { width: 90px; }
+.employment-sheet .sheet-col-preview { width: 135px; }
+.employment-sheet .sheet-col-actions { width: 74px; }
+.employment-sheet th, .employment-sheet td { padding: 9px 6px; border-bottom: 1px solid var(--border-color); vertical-align: top; text-align: left; }
+.employment-sheet thead th { background: #f3f5f7; font-weight: 600; font-size: .78rem; color: var(--text-muted); white-space: nowrap; }
+.employment-sheet tbody:last-child tr:last-child td { border-bottom: 0; }
+.employment-sheet .employment-row-number { padding-top: 20px; color: var(--text-muted); font-weight: 400; text-align: center; }
+.employment-sheet-row:focus-within { background: #f5f8fc; }
+.employment-sheet input:not([type="checkbox"]), .employment-sheet select { width: 100%; min-width: 0; min-height: 36px; height: 36px; margin: 0; padding: 6px 7px; border-radius: 4px; font-size: .84rem; background-color: white; }
+.employment-sheet input:focus-visible, .employment-sheet select:focus-visible, .employment-sheet button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.employment-sheet input[type="number"] { font-variant-numeric: tabular-nums; }
+.employment-sheet .roc-month-field input[type="number"] { appearance: textfield; }
+.employment-sheet .roc-month-field input::-webkit-inner-spin-button, .employment-sheet .roc-month-field input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.employment-sheet input[id$="base-amount"] { text-align: right; }
+.employment-sheet .form-group { margin: 0; }
+.employment-sheet .roc-month-controls { grid-template-columns: minmax(54px, .9fr) minmax(70px, 1.1fr); gap: 4px; }
+.employment-sheet .roc-month-controls select {
+    appearance: none; padding-right: 22px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='m1 1 4 4 4-4' fill='none' stroke='%23475569' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 7px center; background-size: 10px 6px;
+}
+.employment-sheet .input-with-suffix input { padding-right: 20px; }
+.employment-sheet .input-with-suffix > span { right: 5px; font-size: .72rem; }
+.employment-sheet-row .roc-month-field legend { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.employment-sheet-flags { display: block; margin-top: 4px; color: var(--text-muted); font-size: .72rem; overflow-wrap: anywhere; }
+.employment-sheet-flags:empty { display: none; }
+.employment-sheet-preview { display: flex; flex-direction: column; gap: 3px; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.employment-sheet-preview strong { font-size: .8rem; font-weight: 600; }
+.employment-sheet-preview small { color: var(--text-muted); font-size: .72rem; }
+.employment-sheet-preview .employment-sheet-warning { color: #9a5b00; }
+.employment-sheet .btn-sm { min-height: 36px; padding: 6px 9px; white-space: nowrap; font-size: .8rem; }
+.employment-sheet-actions [aria-expanded="true"] i { transform: rotate(180deg); }
+.employment-sheet-detail-row[hidden], .employment-sheet-average-fields[hidden] { display: none; }
+.employment-sheet-detail-row > td { padding: 16px; background: #f8fafc; }
+.employment-sheet-detail { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(320px, 1.4fr) auto; gap: 20px; align-items: start; }
+.employment-sheet-detail label, .employment-sheet-detail legend { font-size: .8rem; }
+.employment-average-toggle { display: flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; }
+.employment-average-toggle input { width: 16px; height: 16px; margin: 0; }
+.employment-sheet-average > small { display: block; color: var(--text-muted); margin-top: 5px; font-size: .75rem; }
+.employment-sheet-average-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.employment-inline-months { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-color); white-space: normal; }
+.employment-inline-months h4 { margin: 0; font-size: .86rem; }
+.employment-inline-months > p { margin: 6px 0 12px; font-size: .78rem; color: var(--text-muted); }
+.employment-inline-month-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.employment-inline-month-cell { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.employment-inline-month-cell > label { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.employment-inline-month-cell > small { font-size: .72rem; color: var(--text-muted); line-height: 1.5; }
+.employment-inline-month-cell.is-outside > label { color: var(--text-muted); }
+.employment-sheet .employment-inline-month-cell input[readonly] { background-color: #eef1f5; color: var(--text-muted); }
+.employment-sheet .employment-inline-month-cell input[aria-invalid="true"] { border-color: var(--danger); }
+.employment-inline-month-cell input[hidden] { display: none; }
+.employment-month-reset { align-self: flex-start; padding: 4px 0; min-height: 32px; color: var(--primary); background: transparent; border: 0; font-size: .72rem; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.employment-month-reset[hidden] { display: none; }
+@media (max-width: 640px) {
+    .employment-inline-month-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; }
+    .employment-month-reset { min-height: 44px; }
+}
+.employment-person-editor-summary .employment-person-months { gap: 0; }
+.employment-person-editor-summary .employment-person-months > div { border: 0; border-right: 1px solid var(--border-color); border-radius: 0; padding: 4px 12px; background: transparent; }
+.employment-person-editor-summary .employment-person-months > div:last-child { border-right: 0; }
+@media (pointer: coarse) {
+    .employment-sheet input:not([type="checkbox"]), .employment-sheet select, .employment-sheet .btn-sm { min-height: 44px; height: 44px; }
+    .employment-average-toggle { min-height: 44px; }
+}
+@media (max-width: 640px) {
+    .employment-sheet-wrap { overflow: visible; border: 0; }
+    .employment-sheet { min-width: 0; display: block; }
+    .employment-sheet colgroup, .employment-sheet thead { display: none; }
+    .employment-sheet tbody { display: block; margin-bottom: 12px; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
+    .employment-sheet-row { display: grid; grid-template-columns: 1fr 1fr; padding: 10px; gap: 10px; }
+    .employment-sheet .employment-sheet-row > td { padding: 0; border: 0; min-width: 0; }
+    .employment-sheet-row > td::before { content: attr(data-label); display: block; margin-bottom: 4px; font-size: .75rem; color: var(--text-muted); }
+    .employment-sheet-row > td[data-label="計畫"] { grid-column: 1 / -1; }
+    .employment-sheet .employment-row-number { display: none; }
+    .employment-sheet input:not([type="checkbox"]), .employment-sheet select { min-height: 44px; height: 44px; font-size: 16px; }
+    .employment-sheet-actions { grid-column: 1 / -1; text-align: right !important; }
+    .employment-sheet .btn-sm { min-height: 44px; }
+    .employment-sheet-detail-row, .employment-sheet-detail-row > td { display: block; }
+    .employment-sheet-detail { grid-template-columns: 1fr; gap: 12px; }
+    .employment-sheet-average-fields { grid-template-columns: 1fr; }
+    .employment-person-editor-summary .employment-person-months { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 12px; }
+    .employment-person-editor-summary .employment-person-months > div { padding: 4px 8px; }
+}
+@media (max-width: 360px) {
+    .employment-sheet-row > td[data-label="開始（民國）"], .employment-sheet-row > td[data-label="結束（民國）"] { grid-column: 1 / -1; }
+}
 
 @media (max-width: 768px) {
     .employment-header,
@@ -1696,7 +1792,6 @@ button.employment-span-value:hover { background: rgba(255, 255, 255, .4); }
     .employment-person-caret { grid-column: 2; grid-row: 1 / span 4; }
     .employment-person-months { overflow-x: auto; grid-template-columns: repeat(6, minmax(108px, 1fr)); }
     .employment-person-record dl { grid-template-columns: 1fr 1fr; }
-    .employment-draft-preview { grid-template-columns: 1fr; }
     .project-color-options { grid-template-columns: repeat(2, minmax(116px, 1fr)); }
     .project-color-meta { align-items: flex-start; flex-direction: column; gap: 0; }
 }
@@ -1770,4 +1865,72 @@ button.employment-span-value:hover { background: rgba(255, 255, 255, .4); }
     .inventory-mobile-actions .btn { min-height: 44px; padding: 7px 10px; }
     #inv-table th:last-child,
     #inv-table td:last-child { width: 52px !important; }
+}
+
+/* 工作頁面以內容分隔，降低重複卡片裝飾。 */
+.overview-panel { box-shadow: none; border-radius: 8px; }
+.overview-panel-header p { display: none; }
+.overview-shortcuts > button, .overview-shortcuts > a { box-shadow: none; }
+@media (max-width: 768px) {
+    .inventory-check { min-width: 88px; }
+    .btn-sm { min-height: 44px; }
+    .instrument-contact-mobile { display: block; font-size: 13px; white-space: normal; margin-top: 8px; }
+    .instrument-contact-mobile summary { min-height: 44px; padding: 10px 0; cursor: pointer; color: var(--primary); }
+    .instrument-contact-mobile p { max-width: 230px; }
+    .data-health > div { align-items: flex-start; }
+}
+
+.inventory-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.inventory-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.table-sort { font: inherit; color: inherit; background: transparent; border: 0; min-height: 44px; cursor: pointer; padding: 0 4px; }
+@media (max-width: 768px) {
+    .inventory-filters { width: 100%; }
+    .inventory-filters > input, .inventory-filters > select { flex: 1; min-width: 0; width: 45% !important; }
+    #inv-table { table-layout: fixed; }
+    #inv-table th:first-child, #inv-table td:first-child { width: 100px !important; }
+    #inv-table td { white-space: normal; overflow-wrap: anywhere; }
+    .inventory-link-badge { flex-wrap: wrap; white-space: normal; }
+}
+
+/* 日常操作：提交區、資料檢視與集中編輯。 */
+.duty-completion { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:20px 24px; margin:20px 0 28px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-card); }
+.duty-completion strong { color:var(--text-main); font-size:1rem; }
+.duty-completion .duty-submit-summary { margin:6px 0 0; padding:0; font-size:.9rem; line-height:1.6; color:var(--text-muted); }
+.duty-completion .btn { flex-shrink:0; min-height:44px; white-space:nowrap; }
+.duty-completion .btn:disabled { background:#e7ebf1; color:#64748b; border-color:#d6dde7; opacity:1; cursor:not-allowed; }
+.instrument-manual-link { display:flex; width:fit-content; align-items:center; gap:6px; min-height:36px; margin-top:8px; padding:4px 10px; border:1px solid var(--border-color); border-radius:6px; color:var(--primary); text-decoration:none; font-size:.85rem; }
+.instrument-manual-link:hover { background:var(--bg-hover); }
+.record-details-dialog { max-width:640px; }
+.record-details { margin:20px 0 0; }
+.record-details > div { display:grid; grid-template-columns:90px minmax(0,1fr); gap:16px; padding:12px 0; border-bottom:1px solid var(--border-color); }
+.record-details dt { color:var(--text-muted); }
+.record-details dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.bulletin-editor-dialog { max-width:680px; }
+.bulletin-editor-dialog .overview-inline-editor { margin:0; padding:0; border:0; border-radius:0; background:transparent; }
+.bulletin-editor-dialog .overview-editor-heading h4 { display:none; }
+.bulletin-editor-dialog .overview-editor-actions { position:sticky; bottom:0; background:var(--bg-card); padding:16px 0 4px; border-top:1px solid var(--border-color); }
+.editor-options { margin:16px 0; border-top:1px solid var(--border-color); }
+.editor-options summary { padding:14px 0; min-height:44px; cursor:pointer; color:var(--text-muted); }
+.routine-col-actions { width:80px; }
+.project-budget-track { display:block; height:5px; border-radius:3px; background:#e7ebf1; overflow:hidden; margin-top:6px; }
+.project-budget-track > span { display:block; height:100%; background:#526d8c; border-radius:3px; }
+.amount-neg .project-budget-track > span { background:var(--danger); }
+.employment-empty { padding:36px 24px; border:1px dashed var(--border-color); border-radius:8px; text-align:center; }
+.employment-empty h4 { margin:0 0 10px; }
+.employment-empty p { color:var(--text-muted); margin-bottom:20px; line-height:1.7; }
+.project-management-table { min-width:860px; }
+.employment-timeline-controls { flex-wrap:wrap; gap:10px; }
+.employment-timeline-controls p { margin:0; }
+.routine-visibility { display:block; margin-top:5px; color:var(--text-muted); font-size:.78rem; }
+.employment-header p { margin:0; }
+@media(max-width:768px) {
+ .employment-header { flex-direction:row; align-items:center; gap:12px; }
+ .employment-header .btn { width:auto; flex-shrink:0; }
+ .employment-header p { font-size:.82rem; line-height:1.6; }
+ .duty-completion { padding:18px; flex-direction:column; align-items:stretch; gap:16px; }
+ .duty-completion .btn { align-self:flex-end; min-width:160px; }
+ .instrument-manual-link { min-height:44px; }
+    .overview-panel-header > .toolbar-actions { flex-wrap:wrap; }
+ .routine-overview-table { min-width:760px; }
+ .record-details > div { grid-template-columns:1fr; gap:5px; }
 }

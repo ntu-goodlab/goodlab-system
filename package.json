@@ -6,8 +6,10 @@
   "main": "constants.js",
   "scripts": {
     "dev": "vite",
+    "preview:fixtures": "vite --config scripts/preview.config.mjs",
     "build": "vite build",
     "test": "node --test tests/*.test.mjs",
+    "test:rules": "node scripts/test-rules.mjs",
     "test:accounting": "node --test tests/accounting-calculations.test.mjs",
     "test:member-migration": "node --test tests/member-id-migration.test.mjs",
     "test:select-options": "node --test tests/select-options.test.mjs",
@@ -26,6 +28,8 @@
   },
   "homepage": "https://ntu-goodlab.github.io/goodlab-system/",
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase-tools": "^15.29.0",
     "vite": "^8.0.16"
   },
   "dependencies": {

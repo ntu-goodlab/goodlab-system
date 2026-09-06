@@ -2,7 +2,7 @@
  * GOODLAB — 公積金管理模組 (Accounting)
  * Phase 4：從 script.js 抽出所有公積金報帳相關邏輯。
  */
-import { db, doc, setDoc } from './firebase.js';
+import { db, doc, setDoc, updateDoc } from './firebase.js';
 import { generateId, formatDateForInput, getMemberName } from './utils.js';
 import { showNotification, closeModal, fillPayerSelect } from './ui.js';
 import {
@@ -355,7 +355,9 @@ export const accountingModule = {
         btn.disabled = true;
 
         try {
-            await setDoc(doc(db, "accounting", payload.Txn_ID), payload);
+            const ref = doc(db, "accounting", payload.Txn_ID);
+            if (isNew) await setDoc(ref, payload);
+            else await updateDoc(ref, payload);
             closeModal('acc-modal');
         } catch (e) {
             showNotification("發生錯誤：" + e.message, 'error');

@@ -15,6 +15,10 @@
  */
 import { db, doc, setDoc, writeBatch } from './firebase.js';
 import { generateId } from './utils.js';
+import { captureFormDrafts, restoreFormDrafts } from './form-draft.js';
+import { employmentEditFingerprint } from './employment-edit-state.js';
+import { saveEmploymentMonthAdjustment, saveProjectDetails, employmentOverrideUpdates } from './employment-access.js';
+import { applyEmploymentMonthDrafts } from './employment-month-draft.js';
 import {
     PROJECT_COLOR_OPTIONS,
     buildEmploymentExportWindow,
@@ -372,7 +376,7 @@ export const employmentUtils = {
 
 export const employmentModule = {
     empView: 'people',
-    empPeopleView: 'timeline',
+    empPeopleView: 'list',
     empAmountMode: 'average',
     empAcademicYear: null,
     empTerm: null,
@@ -386,7 +390,7 @@ export const employmentModule = {
 
     _ensureEmploymentState: function() {
         if (!EMPLOYMENT_VIEWS.includes(this.empView)) this.empView = 'people';
-        if (!EMPLOYMENT_PEOPLE_VIEWS.includes(this.empPeopleView)) this.empPeopleView = 'timeline';
+        if (!EMPLOYMENT_PEOPLE_VIEWS.includes(this.empPeopleView)) this.empPeopleView = 'list';
         if (this.empAcademicYear === null || this.empTerm === null) {
             const semester = currentSemester();
             this.empAcademicYear = semester.academicYear;
@@ -410,9 +414,95 @@ export const employmentModule = {
         return semesterKey(this.empAcademicYear, this.empTerm);
     },
 
-    renderEmployment: function() {
+    hasUnsavedEmploymentChanges: function() {
+        return this._employmentDraftBaseline != null
+            && employmentEditFingerprint(document.getElementById('employment-content')) !== this._employmentDraftBaseline;
+    },
+
+    resetEmploymentEditors: function() {
+        this.employmentPersonEditorOpen = false;
+        this.employmentPersonId = '';
+        this.employmentPersonDrafts = [];
+        this.projectEditorOpen = false;
+        this.projectEditId = null;
+        this.empMonthEditor = null;
+        this._pendingProjectId = null;
+        this._employmentDraftBaseline = null;
+    },
+
+    confirmEmploymentLeave: function() {
+        if (this._employmentSaveToken) {
+            this.showNotification('正在儲存，請稍候再切換。', 'info');
+            return false;
+        }
+        return !this.hasUnsavedEmploymentChanges()
+            || confirm('有尚未儲存的聘僱修改。確定放棄修改並離開嗎？');
+    },
+
+    _discardEmploymentEditor: function() {
+        if (!this.confirmEmploymentLeave()) return false;
+        this.resetEmploymentEditors();
+        return true;
+    },
+
+    guardEmploymentNavigation: function(tabId, fromRoute = false) {
+        if (this.currentRole !== 'Admin' || tabId === 'employment') return true;
+        if (!this.confirmEmploymentLeave()) {
+            if (fromRoute) history.replaceState({ tabId: 'employment' }, '', '#/employment');
+            return false;
+        }
+        this.resetEmploymentEditors();
+        return true;
+    },
+
+    protectEmploymentUnload: function(event) {
+        if (this.currentRole !== 'Admin') return;
+        if (!this._employmentSaveToken && !this.hasUnsavedEmploymentChanges()) return;
+        event.preventDefault();
+        event.returnValue = '';
+    },
+
+    _runEmploymentSave: async function(buttonId, write, message) {
+        if (this._employmentSaveToken) return;
+        const token = { uid: this.currentUser?.uid };
+        this._employmentSaveToken = token;
+        const container = document.getElementById('employment-content');
+        const controls = [...(container?.querySelectorAll('input, select, textarea, button') || [])]
+            .map(field => ({ field, disabled: field.disabled }));
+        const button = document.getElementById(buttonId);
+        const label = button.textContent;
+        controls.forEach(({ field }) => { field.disabled = true; });
+        button.disabled = true;
+        button.textContent = '儲存中...';
+        const isCurrent = () => this._employmentSaveToken === token
+            && this.currentUser?.uid === token.uid && this.currentRole === 'Admin';
+        try {
+            await write();
+            if (!isCurrent()) return;
+            this._employmentSaveToken = null;
+            this.resetEmploymentEditors();
+            this.renderEmployment();
+            this.showNotification(message.text, message.type || 'success');
+        } catch (error) {
+            if (!isCurrent()) return;
+            this.showNotification('儲存失敗，輸入已保留，可直接重試：' + error.message, 'error');
+        } finally {
+            if (isCurrent()) {
+                this._employmentSaveToken = null;
+                controls.forEach(({ field, disabled }) => { field.disabled = disabled; });
+                button.disabled = false;
+                button.textContent = label;
+            }
+            if (this._employmentSaveToken === token) this._employmentSaveToken = null;
+        }
+    },
+
+    renderEmployment: function({ preserveDrafts = false } = {}) {
         const container = document.getElementById('employment-content');
         if (!container) return;
+        if (this._employmentSaveToken) return;
+        const wasDirty = this.hasUnsavedEmploymentChanges();
+        const drafts = preserveDrafts ? captureFormDrafts(container) : [];
 
         if (this.currentRole !== 'Admin') {
             container.innerHTML = '<div class="empty-state"><i class="ph-fill ph-lock-key" aria-hidden="true"></i>此頁面僅限 Admin 檢視</div>';
@@ -433,14 +523,19 @@ export const employmentModule = {
 
         container.innerHTML = `
             <div class="employment-header">
-                <div><h2>學生聘僱</h2><p>依學期查看人員平均月薪、各計畫聘僱金額與業務費。</p></div>
+                <div><p>依學期安排聘僱、查看申報金額與計畫餘額。</p></div>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="app.exportEmploymentExcel()"><i class="ph ph-download-simple" aria-hidden="true"></i> 匯出</button>
             </div>
             <nav class="employment-tabs" aria-label="學生聘僱子頁面">${tabs}</nav>
             ${this._renderSemesterNavigator()}
             <div class="employment-view">${content}</div>`;
 
+        restoreFormDrafts(container, drafts);
+        if (this.projectEditorOpen) this.updateProjectColorSelection(document.querySelector('input[name="project-color-key"]:checked')?.value);
         if (this.employmentPersonEditorOpen) this.updateEmploymentPersonPreviews();
+        if (this._employmentDraftBaseline == null || (preserveDrafts && !wasDirty)) {
+            this._employmentDraftBaseline = employmentEditFingerprint(container);
+        }
     },
 
     _renderSemesterNavigator: function() {
@@ -448,13 +543,13 @@ export const employmentModule = {
         const current = currentSemester();
         const isCurrent = current.academicYear === this.empAcademicYear && current.term === this.empTerm;
         const currentControl = isCurrent
-            ? '<span class="semester-current-state"><i class="ph ph-calendar-check" aria-hidden="true"></i>本學期</span>'
+            ? ''
             : '<button type="button" class="btn btn-secondary btn-sm semester-current-button" onclick="app.goToCurrentEmploymentSemester()"><i class="ph ph-calendar-check" aria-hidden="true"></i>回到本學期</button>';
 
         return `<div class="semester-navigator" aria-label="學期切換">
             <div class="semester-nav-controls">
                 <button type="button" class="btn btn-secondary btn-sm semester-arrow-button" onclick="app.changeEmploymentSemester(-1)" aria-label="上一學期"><i class="ph ph-caret-left" aria-hidden="true"></i></button>
-                <div class="semester-label"><strong>${semesterLabel(this.empAcademicYear, this.empTerm)}</strong><span>${formatRocMonth(months[0])}～${formatRocMonth(months[months.length - 1])}</span></div>
+                <div class="semester-label"><strong>${semesterLabel(this.empAcademicYear, this.empTerm)}</strong><span>${formatRocMonth(months[0])}～${formatRocMonth(months[months.length - 1])}${isCurrent ? ' · 本學期' : ''}</span></div>
                 <button type="button" class="btn btn-secondary btn-sm semester-arrow-button" onclick="app.changeEmploymentSemester(1)" aria-label="下一學期"><i class="ph ph-caret-right" aria-hidden="true"></i></button>
             </div>
             ${currentControl}
@@ -462,27 +557,23 @@ export const employmentModule = {
     },
 
     setEmploymentView: function(view) {
-        if (!EMPLOYMENT_VIEWS.includes(view)) return;
-        if (this.employmentPersonEditorOpen && view !== 'people' && !confirm('離開人員聘僱會放棄尚未儲存的修改，確定要繼續嗎？')) return;
-        if (view !== 'people') {
-            this.employmentPersonEditorOpen = false;
-            this.employmentPersonId = '';
-            this.employmentPersonDrafts = [];
-        }
+        if (!EMPLOYMENT_VIEWS.includes(view) || view === this.empView) return;
+        if (!this._discardEmploymentEditor()) return;
         this.empView = view;
         this.empMonthEditor = null;
         this.renderEmployment();
     },
 
     setEmploymentPeopleView: function(view) {
-        if (!EMPLOYMENT_PEOPLE_VIEWS.includes(view)) return;
+        if (!EMPLOYMENT_PEOPLE_VIEWS.includes(view) || view === this.empPeopleView) return;
+        if (!this._discardEmploymentEditor()) return;
         this.empPeopleView = view;
         this.empMonthEditor = null;
         this.renderEmployment();
     },
 
     changeEmploymentSemester: function(direction) {
-        if (this.employmentPersonEditorOpen && !confirm('切換學期會放棄尚未儲存的聘僱修改，確定要繼續嗎？')) return;
+        if (!this._discardEmploymentEditor()) return;
         const next = shiftSemester(this.empAcademicYear, this.empTerm, direction);
         this.empAcademicYear = next.academicYear;
         this.empTerm = next.term;
@@ -494,7 +585,7 @@ export const employmentModule = {
     },
 
     goToCurrentEmploymentSemester: function() {
-        if (this.employmentPersonEditorOpen && !confirm('回到本學期會放棄尚未儲存的聘僱修改，確定要繼續嗎？')) return;
+        if (!this._discardEmploymentEditor()) return;
         const current = currentSemester();
         this.empAcademicYear = current.academicYear;
         this.empTerm = current.term;
@@ -506,7 +597,8 @@ export const employmentModule = {
     },
 
     setEmploymentAmountMode: function(mode) {
-        if (!['declared', 'average'].includes(mode)) return;
+        if (!['declared', 'average'].includes(mode) || mode === this.empAmountMode) return;
+        if (!this._discardEmploymentEditor()) return;
         this.empAmountMode = mode;
         this.empMonthEditor = null;
         this.renderEmployment();
@@ -524,12 +616,12 @@ export const employmentModule = {
         const listActive = this.empPeopleView === 'list';
         const viewToggle = `<div class="employment-view-toggle" role="group" aria-label="人員聘僱檢視方式">
             <button type="button" class="btn-filter ${listActive ? 'active' : ''}" onclick="app.setEmploymentPeopleView('list')" aria-pressed="${listActive}"><i class="ph ph-list-dashes" aria-hidden="true"></i> 人員列表</button>
-            <button type="button" class="btn-filter ${listActive ? '' : 'active'}" onclick="app.setEmploymentPeopleView('timeline')" aria-pressed="${!listActive}"><i class="ph ph-chart-bar-horizontal" aria-hidden="true"></i> 甘特圖</button>
+            <button type="button" class="btn-filter ${listActive ? '' : 'active'}" onclick="app.setEmploymentPeopleView('timeline')" aria-pressed="${!listActive}"><i class="ph ph-chart-bar-horizontal" aria-hidden="true"></i> 月份時程</button>
         </div>`;
 
         const editor = this._renderEmploymentPersonEditor();
         const content = this.employmentPersonEditorOpen ? '' : (listActive ? this._renderPeopleListView() : this._renderTimelineView());
-        const toolbarActions = this.employmentPersonEditorOpen ? '' : `<div class="employment-toolbar-actions">${viewToggle}<button type="button" class="btn btn-primary" onclick="app.openEmploymentPersonEditor()"><i class="ph ph-user-plus" aria-hidden="true"></i> 新增／編輯人員</button></div>`;
+        const toolbarActions = this.employmentPersonEditorOpen ? '' : `<div class="employment-toolbar-actions">${viewToggle}<button type="button" class="btn btn-primary" onclick="app.openEmploymentPersonEditor()"><i class="ph ph-user-plus" aria-hidden="true"></i> 新增聘僱</button></div>`;
         return `<div class="employment-toolbar employment-people-toolbar">
                 <div><h3>本學期聘僱人員</h3></div>
                 ${toolbarActions}
@@ -548,7 +640,7 @@ export const employmentModule = {
         });
 
         if (!grouped.size) {
-            return '<div class="empty-state"><i class="ph ph-users" aria-hidden="true"></i>這個學期尚無聘僱人員</div>';
+            return `<div class="employment-empty"><h4>這個學期尚無聘僱人員</h4><p>${projects.length ? '選擇人員，再填入計畫、期間與月額。若要找既有紀錄，可先切換上方學期。' : '先建立經費計畫，再加入學生的聘僱資料。'}</p><button type="button" class="btn btn-primary" onclick="${projects.length ? 'app.openEmploymentPersonEditor()' : "app.setEmploymentView('projects'); app.openProjectEditor()"}">${projects.length ? '新增第一筆聘僱' : '先新增計畫'}</button></div>`;
         }
 
         const membersById = new Map((this.data.members || []).map(member => [member.Student_ID, member]));
@@ -635,8 +727,8 @@ export const employmentModule = {
         });
 
         const modeToggle = `<div class="employment-mode-toggle" role="group" aria-label="時程金額模式">
-            <button type="button" class="btn-filter ${mode === 'average' ? 'active' : ''}" onclick="app.setEmploymentAmountMode('average')">平均月薪</button>
-            <button type="button" class="btn-filter ${mode === 'declared' ? 'active' : ''}" onclick="app.setEmploymentAmountMode('declared')">聘僱金額</button>
+            <button type="button" class="btn-filter ${mode === 'average' ? 'active' : ''}" aria-pressed="${mode === 'average'}" onclick="app.setEmploymentAmountMode('average')">平均分攤</button>
+            <button type="button" class="btn-filter ${mode === 'declared' ? 'active' : ''}" aria-pressed="${mode === 'declared'}" onclick="app.setEmploymentAmountMode('declared')">申報金額</button>
         </div>`;
 
         if (!grouped.size) {
@@ -664,7 +756,7 @@ export const employmentModule = {
                 const schedule = mode === 'declared' ? declaredSchedule(employment) : averageSchedule(employment);
                 const projectName = project?.name || '未指定計畫';
                 const colorKey = resolveProjectColorKey(project || { _id: employment.project_id, name: projectName });
-                const segments = buildScheduleSegments(schedule, visibleMonths);
+                const segments = buildScheduleSegments(schedule, visibleMonths, { includeZero: mode === 'declared' });
                 visibleMonths.forEach(month => {
                     totals[month] += Number(schedule[month]) || 0;
                 });
@@ -741,7 +833,7 @@ export const employmentModule = {
             </tr>`;
         });
 
-        return `<div class="employment-timeline-controls">${modeToggle}</div>
+        return `<div class="employment-timeline-controls">${modeToggle}<p class="form-help">${mode === 'declared' ? '點選月份金額可調整單月；0 元月份也可編輯。' : '依對應期間平均分攤；要調整金額，請切換「申報金額」。'}</p></div>
             <div class="employment-timeline-wrap" tabindex="0" role="region" aria-label="聘僱時程表，可左右及上下捲動"><table class="employment-timeline-table">
                 <thead><tr><th scope="col">人員</th><th scope="col">計畫</th>${headers}</tr></thead>
                 <tbody>${rows}</tbody>
@@ -750,6 +842,9 @@ export const employmentModule = {
     },
 
     editEmploymentMonth: function(employmentId, month) {
+        if (this.currentRole !== 'Admin') return;
+        if (this.empMonthEditor?.employmentId === employmentId && this.empMonthEditor?.month === month) return;
+        if (!this._discardEmploymentEditor()) return;
         this.empAmountMode = 'declared';
         this.empMonthEditor = { employmentId, month };
         this.renderEmployment();
@@ -757,6 +852,7 @@ export const employmentModule = {
     },
 
     cancelEmploymentMonthEdit: function() {
+        if (!this._discardEmploymentEditor()) return;
         this.empMonthEditor = null;
         this.renderEmployment();
     },
@@ -771,7 +867,7 @@ export const employmentModule = {
         const amount = declaredSchedule(employment)[this.empMonthEditor.month] ?? employment.base_monthly_amount;
         const reason = typeof override === 'object' ? override.reason || '' : '';
 
-        return `<section id="employment-month-editor" class="inline-editor" aria-labelledby="employment-month-editor-title">
+        return `<section id="employment-month-editor" class="inline-editor" data-draft-key="month-${escapeHtml(employment._id)}-${this.empMonthEditor.month}" aria-labelledby="employment-month-editor-title">
             <div class="inline-editor-heading"><div><h3 id="employment-month-editor-title">編輯單月聘僱金額</h3><p>${escapeHtml(member?.Name_Ch || employment.student_id)}／${escapeHtml(project?.name || '未指定計畫')}／${formatRocMonth(this.empMonthEditor.month)}</p></div><button type="button" class="btn btn-secondary btn-sm" onclick="app.cancelEmploymentMonthEdit()">取消</button></div>
             <div class="inline-editor-grid compact">
                 <div class="readonly-field"><span>基本月額</span><strong>${formatMoney(employment.base_monthly_amount)}</strong></div>
@@ -796,37 +892,17 @@ export const employmentModule = {
     },
 
     saveEmploymentMonth: async function() {
+        if (this.currentRole !== 'Admin' || this._employmentSaveToken) return;
         if (!this.empMonthEditor || !this.validateEmploymentMonthEdit()) return;
         const employment = this._employmentData().find(item => item._id === this.empMonthEditor.employmentId);
         if (!employment) return;
         const month = this.empMonthEditor.month;
         const amount = toInteger(document.getElementById('employment-month-amount').value);
         const reason = document.getElementById('employment-month-reason').value.trim();
-        const overrides = { ...employment.month_overrides };
-        if (amount === employment.base_monthly_amount) delete overrides[month];
-        else overrides[month] = { amount, reason, updated_at: new Date().toISOString() };
 
-        const button = document.getElementById('btn-save-employment-month');
-        button.disabled = true;
-        button.textContent = '儲存中...';
-        try {
-            await setDoc(doc(db, 'employments', employment._id), {
-                schema_version: 2,
-                declared_start_month: employment.declared_start_month,
-                declared_end_month: employment.declared_end_month,
-                base_monthly_amount: employment.base_monthly_amount,
-                average_start_month: employment.average_start_month,
-                average_end_month: employment.average_end_month,
-                month_overrides: overrides,
-                updated_at: new Date().toISOString()
-            }, { merge: true });
-            this.empMonthEditor = null;
-            this.showNotification('單月金額已更新', 'success');
-        } catch (error) {
-            this.showNotification('儲存失敗：' + error.message, 'error');
-            button.disabled = false;
-            button.textContent = '儲存單月金額';
-        }
+        await this._runEmploymentSave('btn-save-employment-month',
+            () => saveEmploymentMonthAdjustment(db, employment, month, amount, reason),
+            { text: '單月金額已更新' });
     },
 
     _newEmploymentDraft: function(studentId = '') {
@@ -851,6 +927,9 @@ export const employmentModule = {
     },
 
     openEmploymentPersonEditor: function(studentId = '') {
+        if (this.currentRole !== 'Admin') return;
+        if (!this._discardEmploymentEditor()) return;
+        if (!this._projectData().length) { this.empView = 'projects'; this.openProjectEditor(); return; }
         this.employmentPersonEditorOpen = true;
         this.employmentPersonId = studentId;
         const existing = studentId ? this._draftsForPersonInSemester(studentId) : [];
@@ -860,6 +939,12 @@ export const employmentModule = {
     },
 
     changeEmploymentPersonEditorStudent: function(studentId) {
+        if (studentId === this.employmentPersonId) return;
+        if (!this._discardEmploymentEditor()) {
+            document.getElementById('employment-person-student').value = this.employmentPersonId;
+            return;
+        }
+        this.employmentPersonEditorOpen = true;
         this.employmentPersonId = studentId;
         const existing = studentId ? this._draftsForPersonInSemester(studentId) : [];
         this.employmentPersonDrafts = existing.length ? existing : [this._newEmploymentDraft(studentId)];
@@ -868,6 +953,7 @@ export const employmentModule = {
     },
 
     cancelEmploymentPersonEditor: function() {
+        if (!this._discardEmploymentEditor()) return;
         this.employmentPersonEditorOpen = false;
         this.employmentPersonId = '';
         this.employmentPersonDrafts = [];
@@ -885,47 +971,76 @@ export const employmentModule = {
             .join('');
         const projects = this._projectData();
 
-        const cards = this.employmentPersonDrafts.map((employment, index) => {
+        const rows = this.employmentPersonDrafts.map((employment, index) => {
             const project = projects.find(item => item._id === employment.project_id);
             if (employment._delete) {
-                return `<div class="employment-draft-deleted">
+                return `<tbody><tr><td colspan="7"><div class="employment-draft-deleted">
                     <span><i class="ph ph-trash" aria-hidden="true"></i>${escapeHtml(project?.name || '未指定計畫')}將在儲存後刪除</span>
                     <button type="button" class="btn btn-secondary btn-sm" onclick="app.toggleEmploymentDraftDelete(${index})">復原</button>
-                </div>`;
+                </div></td></tr></tbody>`;
             }
 
             const prefix = `employment-person-${index}`;
+            const customAverage = employment._customAverage ?? (employment.average_start_month !== employment.declared_start_month || employment.average_end_month !== employment.declared_end_month);
             const previewHandler = 'app.updateEmploymentPersonPreviews()';
             const projectOptions = projects
                 .filter(item => item.status !== 'archived' || item._id === employment.project_id)
                 .map(item => `<option value="${escapeHtml(item._id)}" ${item._id === employment.project_id ? 'selected' : ''}>${escapeHtml(item.name)}</option>`)
                 .join('');
 
-            return `<fieldset class="employment-draft-card" data-employment-draft="${index}">
-                <legend>計畫聘僱 ${index + 1}${employment.schema_version === 2 || !employment._id ? '' : '<span class="legacy-badge">舊格式</span>'}</legend>
-                <div class="employment-draft-card-actions"><button type="button" class="btn btn-danger btn-sm" onclick="app.toggleEmploymentDraftDelete(${index})"><i class="ph ph-trash" aria-hidden="true"></i>${employment._id ? '標記刪除' : '移除此列'}</button></div>
-                <div class="inline-editor-grid">
-                    <div class="form-group wide"><label for="${prefix}-project">計畫</label><select id="${prefix}-project" onchange="app.updateEmploymentPersonPreviews()"><option value="">請選擇計畫</option>${projectOptions}</select></div>
-                    ${renderRocMonthField(`${prefix}-declared-start`, '申報聘僱開始月份', employment.declared_start_month, { required: true, previewHandler })}
-                    ${renderRocMonthField(`${prefix}-declared-end`, '申報聘僱結束月份', employment.declared_end_month, { required: true, previewHandler })}
-                    <div class="form-group"><label for="${prefix}-base-amount">基本月額</label><input type="number" id="${prefix}-base-amount" min="1" step="1" value="${employment.base_monthly_amount || ''}" oninput="app.updateEmploymentPersonPreviews()"></div>
-                    <div class="form-group"><label for="${prefix}-remark">備註（選填）</label><input type="text" id="${prefix}-remark" value="${escapeHtml(employment.remark || '')}"></div>
-                    <div class="average-period-heading wide"><div><strong>平均月薪對應期間</strong><span>特殊計畫可與申報聘僱期間不同。</span></div><button type="button" class="btn btn-secondary btn-sm" onclick="app.copyEmploymentDraftPeriod(${index})">帶入申報期間</button></div>
-                    ${renderRocMonthField(`${prefix}-average-start`, '對應開始月份', employment.average_start_month, { required: true, previewHandler })}
-                    ${renderRocMonthField(`${prefix}-average-end`, '對應結束月份', employment.average_end_month, { required: true, previewHandler })}
-                    <div id="${prefix}-preview" class="employment-draft-preview wide" aria-live="polite"></div>
+            return `<tbody data-employment-draft="${index}">
+                <tr class="employment-sheet-row">
+                    <th scope="row" class="employment-row-number">${index + 1}</th>
+                    <td data-label="計畫"><label class="sr-only" for="${prefix}-project">第 ${index + 1} 列計畫</label><select id="${prefix}-project" onchange="app.updateEmploymentPersonPreviews()"><option value="">請選擇計畫</option>${projectOptions}</select><small id="${prefix}-flags" class="employment-sheet-flags"></small></td>
+                    <td data-label="開始（民國）">${renderRocMonthField(`${prefix}-declared-start`, `第 ${index + 1} 列申報開始`, employment.declared_start_month, { required: true, previewHandler })}</td>
+                    <td data-label="結束（民國）">${renderRocMonthField(`${prefix}-declared-end`, `第 ${index + 1} 列申報結束`, employment.declared_end_month, { required: true, previewHandler })}</td>
+                    <td data-label="基本月額"><label class="sr-only" for="${prefix}-base-amount">第 ${index + 1} 列基本月額</label><input type="number" id="${prefix}-base-amount" min="1" step="1" value="${employment.base_monthly_amount || ''}" oninput="app.updateEmploymentPersonPreviews()"></td>
+                    <td data-label="平均月薪"><div id="${prefix}-preview" class="employment-sheet-preview" aria-live="polite"></div></td>
+                    <td class="employment-sheet-actions"><button type="button" id="${prefix}-expand" class="btn btn-secondary btn-sm" aria-label="第 ${index + 1} 列設定" aria-expanded="${Boolean(employment._detailsOpen)}" aria-controls="${prefix}-details" onclick="app.toggleEmploymentDraftDetails(${index})">設定 <i class="ph ph-caret-down" aria-hidden="true"></i></button></td>
+                </tr>
+                <tr id="${prefix}-details" class="employment-sheet-detail-row" ${employment._detailsOpen ? '' : 'hidden'}><td colspan="7"><div class="employment-sheet-detail">
+                    <div class="form-group"><label for="${prefix}-remark">第 ${index + 1} 列備註</label><input type="text" id="${prefix}-remark" value="${escapeHtml(employment.remark || '')}" placeholder="選填" oninput="app.updateEmploymentPersonPreviews()"></div>
+                    <div class="employment-sheet-average"><label class="employment-average-toggle"><input type="checkbox" id="${prefix}-custom-average" ${customAverage ? 'checked' : ''} onchange="app.updateEmploymentPersonPreviews()">平均月薪使用不同期間</label>
+                        <div id="${prefix}-average-fields" class="employment-sheet-average-fields" ${customAverage ? '' : 'hidden'}>
+                            ${renderRocMonthField(`${prefix}-average-start`, `第 ${index + 1} 列分攤開始`, employment.average_start_month, { required: true, previewHandler })}
+                            ${renderRocMonthField(`${prefix}-average-end`, `第 ${index + 1} 列分攤結束`, employment.average_end_month, { required: true, previewHandler })}
+                        </div><small>未勾選時，分攤期間隨申報期間更新。</small>
+                    </div>
+                    <button type="button" class="btn btn-danger btn-sm" aria-label="刪除第 ${index + 1} 列" onclick="app.toggleEmploymentDraftDelete(${index})"><i class="ph ph-trash" aria-hidden="true"></i>${employment._id ? '標記刪除' : '移除此列'}</button>
                 </div>
-            </fieldset>`;
+                <section class="employment-inline-months" aria-label="第 ${index + 1} 列單月金額調整">
+                    <h4>單月金額調整</h4><p>留空沿用基本月額；填 0 表示該月停聘。調整會與整張表格一起儲存。</p>
+                    <div class="employment-inline-month-grid">${this._semesterMonths().map(month => {
+                        const override = employment.month_overrides[month];
+                        const field = employment._monthDrafts?.[month] || { amount: override === undefined ? '' : (typeof override === 'object' ? override.amount : override), reason: typeof override === 'object' ? override.reason || '' : '' };
+                        return `<div id="${prefix}-${month}-cell" class="employment-inline-month-cell">
+                            <label for="${prefix}-${month}-amount">${formatRocMonth(month)}</label>
+                            <input type="number" min="0" step="1" id="${prefix}-${month}-amount" aria-label="第 ${index + 1} 列 ${formatRocMonth(month)} 月額" aria-describedby="${prefix}-${month}-status" value="${escapeHtml(field.amount)}" placeholder="${employment.base_monthly_amount}" oninput="app.updateEmploymentPersonPreviews()">
+                            <label class="sr-only" for="${prefix}-${month}-reason">第 ${index + 1} 列 ${formatRocMonth(month)} 調整原因</label>
+                            <input type="text" id="${prefix}-${month}-reason" value="${escapeHtml(field.reason)}" placeholder="調整原因" oninput="app.updateEmploymentPersonPreviews()">
+                            <small id="${prefix}-${month}-status"></small>
+                            <button type="button" class="employment-month-reset" aria-label="第 ${index + 1} 列 ${formatRocMonth(month)} 恢復基本月額" onclick="app.resetEmploymentDraftMonth(${index}, '${month}')">恢復基本月額</button>
+                        </div>`;
+                    }).join('')}</div>
+                </section></td></tr>
+            </tbody>`;
         }).join('');
 
-        return `<section id="employment-person-editor" class="inline-editor employment-person-editor" aria-labelledby="employment-person-editor-title">
-            <div class="inline-editor-heading"><div><h3 id="employment-person-editor-title">以人員為單位編輯聘僱</h3><p>同時比較並儲存此人在本學期相關的所有計畫聘僱。</p></div><button type="button" class="btn btn-secondary btn-sm" onclick="app.cancelEmploymentPersonEditor()">取消</button></div>
+        return `<section id="employment-person-editor" class="inline-editor employment-person-editor" data-draft-key="person-${escapeHtml(this.employmentPersonId)}-${this._semesterKey()}" aria-labelledby="employment-person-editor-title">
+            <div class="inline-editor-heading"><div><h3 id="employment-person-editor-title">編輯聘僱</h3><p>每個計畫一列，直接修改欄位。單月金額、備註與分攤期間請展開「設定」。</p></div><button type="button" class="btn btn-secondary btn-sm" onclick="app.cancelEmploymentPersonEditor()">取消</button></div>
             <div class="form-group employment-person-select"><label for="employment-person-student">人員</label><select id="employment-person-student" onchange="app.changeEmploymentPersonEditorStudent(this.value)"><option value="">請選擇人員</option>${memberOptions}</select></div>
-            <div id="employment-person-editor-summary" class="employment-person-editor-summary" aria-live="polite"></div>
-            <div class="employment-draft-list">${cards}</div>
+            ${this.employmentPersonId ? `<div class="employment-sheet-wrap"><table class="employment-sheet" aria-label="人員聘僱編輯表"><colgroup><col class="sheet-col-number"><col class="sheet-col-project"><col class="sheet-col-date"><col class="sheet-col-date"><col class="sheet-col-amount"><col class="sheet-col-preview"><col class="sheet-col-actions"></colgroup><thead><tr><th scope="col">序</th><th scope="col">計畫</th><th scope="col">開始（民國）</th><th scope="col">結束（民國）</th><th scope="col">基本月額</th><th scope="col">平均月薪</th><th scope="col">操作</th></tr></thead>${rows}</table></div><div id="employment-person-editor-summary" class="employment-person-editor-summary" aria-live="polite"></div>` : '<p class="form-help">先選擇人員，已有的聘僱資料會一起載入。</p>'}
             <div id="employment-person-form-error" class="form-error" role="alert" tabindex="-1"></div>
-            <div class="inline-editor-actions split"><button type="button" class="btn btn-secondary" onclick="app.addEmploymentPersonDraft()"><i class="ph ph-plus" aria-hidden="true"></i> 加入計畫聘僱</button><button type="button" class="btn btn-primary" id="btn-save-employment-person" onclick="app.saveEmploymentPerson()">儲存此人全部聘僱</button></div>
+            ${this.employmentPersonId ? '<div class="inline-editor-actions split"><button type="button" class="btn btn-secondary" onclick="app.addEmploymentPersonDraft()"><i class="ph ph-plus" aria-hidden="true"></i> 新增一列</button><button type="button" class="btn btn-primary" id="btn-save-employment-person" onclick="app.saveEmploymentPerson()">儲存變更</button></div>' : ''}
         </section>`;
+    },
+
+    toggleEmploymentDraftDetails: function(index) {
+        const draft = this.employmentPersonDrafts[index];
+        if (!draft) return;
+        draft._detailsOpen = !draft._detailsOpen;
+        document.getElementById(`employment-person-${index}-details`).hidden = !draft._detailsOpen;
+        document.getElementById(`employment-person-${index}-expand`).setAttribute('aria-expanded', String(draft._detailsOpen));
     },
 
     _readRocMonth: function(prefix) {
@@ -938,15 +1053,30 @@ export const employmentModule = {
     _readEmploymentDraft: function(index, existing) {
         if (existing._delete) return existing;
         const prefix = `employment-person-${index}`;
+        const customAverage = Boolean(document.getElementById(`${prefix}-custom-average`)?.checked);
+        const monthFields = { ...existing._monthDrafts };
+        for (const month of this._semesterMonths()) {
+            const amount = document.getElementById(`${prefix}-${month}-amount`);
+            if (amount) monthFields[month] = { amount: amount.value, reason: document.getElementById(`${prefix}-${month}-reason`)?.value || '' };
+        }
+        const baseAmount = Math.max(0, toInteger(document.getElementById(`${prefix}-base-amount`)?.value));
+        const originalOverrides = existing._originalMonthOverrides || existing.month_overrides || {};
+        const activeMonths = this._semesterMonths().filter(month => monthRange(this._readRocMonth(`${prefix}-declared-start`), this._readRocMonth(`${prefix}-declared-end`)).includes(month));
+        const adjustment = applyEmploymentMonthDrafts(originalOverrides, monthFields, activeMonths, baseAmount);
         return normalizeEmployment({
             ...existing,
+            _originalMonthOverrides: originalOverrides,
+            _monthDrafts: monthFields,
+            _monthErrors: adjustment.errors,
+            month_overrides: adjustment.overrides,
             student_id: this.employmentPersonId,
             project_id: document.getElementById(`${prefix}-project`)?.value || '',
             declared_start_month: this._readRocMonth(`${prefix}-declared-start`),
             declared_end_month: this._readRocMonth(`${prefix}-declared-end`),
-            base_monthly_amount: Math.max(0, toInteger(document.getElementById(`${prefix}-base-amount`)?.value)),
-            average_start_month: this._readRocMonth(`${prefix}-average-start`),
-            average_end_month: this._readRocMonth(`${prefix}-average-end`),
+            base_monthly_amount: baseAmount,
+            _customAverage: customAverage,
+            average_start_month: this._readRocMonth(`${prefix}-${customAverage ? 'average' : 'declared'}-start`),
+            average_end_month: this._readRocMonth(`${prefix}-${customAverage ? 'average' : 'declared'}-end`),
             remark: document.getElementById(`${prefix}-remark`)?.value.trim() || ''
         });
     },
@@ -955,6 +1085,13 @@ export const employmentModule = {
         const personSelect = document.getElementById('employment-person-student');
         if (personSelect) this.employmentPersonId = personSelect.value;
         this.employmentPersonDrafts = this.employmentPersonDrafts.map((draft, index) => this._readEmploymentDraft(index, draft));
+    },
+
+    resetEmploymentDraftMonth: function(index, month) {
+        const prefix = `employment-person-${index}-${month}`;
+        document.getElementById(`${prefix}-amount`).value = '';
+        document.getElementById(`${prefix}-reason`).value = '';
+        this.updateEmploymentPersonPreviews();
     },
 
     addEmploymentPersonDraft: function() {
@@ -974,16 +1111,9 @@ export const employmentModule = {
         this.renderEmployment();
     },
 
-    copyEmploymentDraftPeriod: function(index) {
-        ['year', 'month'].forEach(part => {
-            document.getElementById(`employment-person-${index}-average-start-${part}`).value = document.getElementById(`employment-person-${index}-declared-start-${part}`).value;
-            document.getElementById(`employment-person-${index}-average-end-${part}`).value = document.getElementById(`employment-person-${index}-declared-end-${part}`).value;
-        });
-        this.updateEmploymentPersonPreviews();
-    },
-
     updateEmploymentPersonPreviews: function() {
         if (!this.employmentPersonEditorOpen) return;
+        if (!this.employmentPersonId) return;
         const months = this._semesterMonths();
         const readableDrafts = this.employmentPersonDrafts.map((draft, index) => this._readEmploymentDraft(index, draft));
         const activeDrafts = readableDrafts.filter(draft => !draft._delete);
@@ -991,11 +1121,40 @@ export const employmentModule = {
 
         readableDrafts.forEach((draft, index) => {
             if (draft._delete) return;
+            const declaredMonths = monthRange(draft.declared_start_month, draft.declared_end_month);
+            for (const month of months) {
+                const prefix = `employment-person-${index}-${month}`;
+                const amount = document.getElementById(`${prefix}-amount`);
+                if (!amount) continue;
+                const reason = document.getElementById(`${prefix}-reason`);
+                const active = declaredMonths.includes(month);
+                const adjusted = amount.value !== '' && Number(amount.value) !== draft.base_monthly_amount;
+                amount.placeholder = String(draft.base_monthly_amount);
+                amount.readOnly = !active;
+                reason.readOnly = !active;
+                reason.hidden = !active || !adjusted;
+                const error = draft._monthErrors.find(item => item.month === month);
+                amount.setAttribute('aria-invalid', String(Boolean(error)));
+                reason.setAttribute('aria-invalid', String(Boolean(error)));
+                document.getElementById(`${prefix}-status`).textContent = !active ? '不在申報期間，不套用' : error?.message || (adjusted ? '已調整' : '沿用基本月額');
+                document.getElementById(`${prefix}-cell`).classList.toggle('is-outside', !active);
+                document.getElementById(`${prefix}-cell`).querySelector('.employment-month-reset').hidden = !active || (amount.value === '' && reason.value === '');
+            }
             const preview = document.getElementById(`employment-person-${index}-preview`);
             const average = averageSchedule(draft);
             months.forEach(month => { monthlyTotals[month] += average[month] || 0; });
             const warnings = lowDeclaredMonths(draft, months);
-            if (preview) preview.innerHTML = `<div><span>申報總額</span><strong>${formatMoney(declaredTotal(draft))}</strong></div><div><span>平均月薪</span><strong>${formatAverageSummary(draft)}</strong></div><div class="${warnings.length ? 'warning' : ''}"><span>最低金額檢查</span><strong>${warnings.length ? `${warnings.map(formatRocMonth).join('、')} 低於 ${formatMoney(MIN_PROJECT_MONTHLY_AMOUNT)}` : '正常'}</strong></div>`;
+            const averageFields = document.getElementById(`employment-person-${index}-average-fields`);
+            if (averageFields) averageFields.hidden = !draft._customAverage;
+            if (!draft._customAverage) {
+                ['start', 'end'].forEach(edge => ['year', 'month'].forEach(part => {
+                    const field = document.getElementById(`employment-person-${index}-average-${edge}-${part}`);
+                    if (field) field.value = document.getElementById(`employment-person-${index}-declared-${edge}-${part}`).value;
+                }));
+            }
+            if (preview) preview.innerHTML = `<strong>${formatAverageSummary(draft)}</strong><small>申報共 ${formatMoney(declaredTotal(draft))}</small>${warnings.length ? `<small class="employment-sheet-warning" title="${warnings.map(formatRocMonth).join('、')}">${warnings.length} 個月低於 ${formatMoney(MIN_PROJECT_MONTHLY_AMOUNT)}</small>` : ''}`;
+            const flags = document.getElementById(`employment-person-${index}-flags`);
+            if (flags) flags.textContent = [draft._customAverage ? '不同分攤期間' : '', Object.keys(draft.month_overrides || {}).length ? `${Object.keys(draft.month_overrides).length} 個月另有調整` : '', draft.remark ? '有備註' : ''].filter(Boolean).join(' · ');
         });
 
         const summary = document.getElementById('employment-person-editor-summary');
@@ -1003,6 +1162,7 @@ export const employmentModule = {
     },
 
     saveEmploymentPerson: async function() {
+        if (this.currentRole !== 'Admin' || this._employmentSaveToken) return;
         this._captureEmploymentPersonDrafts();
         const errorRegion = document.getElementById('employment-person-form-error');
         const activeDrafts = this.employmentPersonDrafts.filter(draft => !draft._delete);
@@ -1014,6 +1174,7 @@ export const employmentModule = {
             if (!draft.project_id) errorMessage = `第 ${index + 1} 筆尚未選擇計畫。`;
             else if (!draft.declared_start_month || !draft.declared_end_month || monthKeyToIndex(draft.declared_end_month) < monthKeyToIndex(draft.declared_start_month)) errorMessage = `第 ${index + 1} 筆申報聘僱期間不正確。`;
             else if (draft.base_monthly_amount <= 0) errorMessage = `第 ${index + 1} 筆基本月額必須大於 0。`;
+            else if (draft._monthErrors?.length) errorMessage = `第 ${index + 1} 筆 ${formatRocMonth(draft._monthErrors[0].month)}：${draft._monthErrors[0].message}。請展開該列設定。`;
             else if (!draft.average_start_month || !draft.average_end_month || monthKeyToIndex(draft.average_end_month) < monthKeyToIndex(draft.average_start_month)) errorMessage = `第 ${index + 1} 筆平均月薪對應期間不正確。`;
             return Boolean(errorMessage);
         });
@@ -1037,46 +1198,44 @@ export const employmentModule = {
             return;
         }
 
-        const button = document.getElementById('btn-save-employment-person');
-        button.disabled = true;
-        button.textContent = '儲存中...';
-        const batch = writeBatch(db);
-        const now = new Date().toISOString();
+        const warningCount = activeDrafts.reduce((total, draft) => total + lowDeclaredMonths(draft, this._semesterMonths()).length, 0);
+        await this._runEmploymentSave('btn-save-employment-person', async () => {
+            const batch = writeBatch(db);
+            const now = new Date().toISOString();
 
-        this.employmentPersonDrafts.forEach(draft => {
-            if (draft._delete) {
-                if (draft._id) batch.delete(doc(db, 'employments', draft._id));
-                return;
-            }
-            const id = draft._id || generateId('EMP');
-            batch.set(doc(db, 'employments', id), {
-                schema_version: 2,
-                student_id: this.employmentPersonId,
-                project_id: draft.project_id,
-                declared_start_month: draft.declared_start_month,
-                declared_end_month: draft.declared_end_month,
-                base_monthly_amount: draft.base_monthly_amount,
-                average_start_month: draft.average_start_month,
-                average_end_month: draft.average_end_month,
-                month_overrides: draft.month_overrides || {},
-                remark: draft.remark || '',
-                created_at: draft.created_at || now,
-                updated_at: now
-            }, { merge: true });
-        });
+            this.employmentPersonDrafts.forEach(draft => {
+                if (draft._delete) {
+                    if (draft._id) batch.delete(doc(db, 'employments', draft._id));
+                    return;
+                }
+                const id = draft._id || (draft._pendingId ||= generateId('EMP'));
+                const payload = {
+                    schema_version: 2,
+                    student_id: this.employmentPersonId,
+                    project_id: draft.project_id,
+                    declared_start_month: draft.declared_start_month,
+                    declared_end_month: draft.declared_end_month,
+                    base_monthly_amount: draft.base_monthly_amount,
+                    average_start_month: draft.average_start_month,
+                    average_end_month: draft.average_end_month,
+                    month_overrides: draft.month_overrides || {},
+                    remark: draft.remark || '',
+                    created_at: draft.created_at || now,
+                    updated_at: now
+                };
+                if (draft._id) {
+                    const { month_overrides, created_at, ...fields } = payload;
+                    batch.update(doc(db, 'employments', id), {
+                        ...fields,
+                        ...employmentOverrideUpdates(draft._originalMonthOverrides || {}, month_overrides)
+                    });
+                } else {
+                    batch.set(doc(db, 'employments', id), payload, { mergeFields: Object.keys(payload) });
+                }
+            });
 
-        try {
             await batch.commit();
-            const warningCount = activeDrafts.reduce((total, draft) => total + lowDeclaredMonths(draft, this._semesterMonths()).length, 0);
-            this.employmentPersonEditorOpen = false;
-            this.employmentPersonId = '';
-            this.employmentPersonDrafts = [];
-            this.showNotification(warningCount ? `聘僱已儲存；另有 ${warningCount} 個計畫月份低於 ${formatMoney(MIN_PROJECT_MONTHLY_AMOUNT)}，請再確認。` : '此人全部聘僱已儲存', warningCount ? 'warning' : 'success');
-        } catch (error) {
-            this.showNotification('儲存失敗：' + error.message, 'error');
-            button.disabled = false;
-            button.textContent = '儲存此人全部聘僱';
-        }
+        }, { text: warningCount ? '聘僱已儲存；仍有低於最低月額的月份，請確認。' : '此人全部聘僱已儲存', type: warningCount ? 'warning' : 'success' });
     },
 
     _projectSpend: function(projectId, months = null) {
@@ -1111,14 +1270,11 @@ export const employmentModule = {
             const remaining = available === null ? null : available - semesterSpend;
             const state = project._currentState;
             return `<tr class="${state.rank === 2 ? 'is-ended' : ''}">
-                <td><span class="project-name-with-color project-color-${project.color_key}"><span class="employment-project-swatch" aria-hidden="true"></span><strong>${escapeHtml(project.name)}</strong></span></td>
+                <td><span class="project-name-with-color project-color-${project.color_key}"><span class="employment-project-swatch" aria-hidden="true"></span><strong>${escapeHtml(project.name)}</strong></span><small>編號 ${escapeHtml(project.project_number || '未填')} · 代碼 ${escapeHtml(project.project_code || '未填')}</small><small>${formatProjectPeriod(project)}</small></td>
                 <td><span class="project-state-badge is-${state.key}"><i class="ph ${state.icon}" aria-hidden="true"></i>${state.label}</span></td>
-                <td>${escapeHtml(project.project_number || '-')}</td>
-                <td>${escapeHtml(project.project_code || '-')}</td>
-                <td>${formatProjectPeriod(project)}</td>
                 <td class="number-cell">${available === null ? '未設定' : formatMoney(available)}</td>
                 <td class="number-cell">${formatMoney(semesterSpend)}</td>
-                <td class="number-cell ${remaining !== null && remaining < 0 ? 'amount-neg' : ''}">${remaining === null ? '—' : formatMoney(remaining)}</td>
+                <td class="number-cell ${remaining !== null && remaining < 0 ? 'amount-neg' : ''}">${remaining === null ? '未設定預算' : `${remaining < 0 ? '超出 ' : ''}${formatMoney(Math.abs(remaining))}`}<span class="project-budget-track" aria-hidden="true"><span style="width:${available > 0 ? Math.min(100, semesterSpend / available * 100) : 0}%"></span></span></td>
                 <td class="number-cell">${formatMoney(totalSpend)}</td>
                 <td><button type="button" class="btn btn-secondary btn-sm" onclick="app.openProjectEditor('${project._id}')"><i class="ph ph-pencil-simple" aria-hidden="true"></i> 編輯</button></td>
             </tr>`;
@@ -1127,12 +1283,16 @@ export const employmentModule = {
         return `<div class="employment-toolbar"><div><h3>計畫</h3><p>業務費以目前選取學期為單位管理。</p></div><button type="button" class="btn btn-primary" onclick="app.openProjectEditor()"><i class="ph ph-plus" aria-hidden="true"></i> 新增計畫</button></div>
             ${this._renderProjectEditor()}
             <div class="table-container"><table class="project-management-table">
-                <thead><tr><th>計畫</th><th>目前狀況</th><th>計畫編號</th><th>計畫代碼</th><th>計畫期間</th><th>本學期可用業務費</th><th>本學期聘僱支出</th><th>預計剩餘</th><th>累計聘僱支出</th><th>操作</th></tr></thead>
-                <tbody>${rows || '<tr><td colspan="10" class="empty">尚無計畫</td></tr>'}</tbody>
+                <thead><tr><th>計畫／期間</th><th>目前狀況</th><th>本學期可用業務費</th><th>本學期聘僱支出</th><th>預計剩餘</th><th>累計聘僱支出</th><th>操作</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="7" class="empty">尚無計畫，請先新增經費來源。</td></tr>'}</tbody>
             </table></div>`;
     },
 
     openProjectEditor: function(id = null) {
+        if (this.currentRole !== 'Admin') return;
+        if (this.projectEditorOpen && this.projectEditId === id) return;
+        if (!this._discardEmploymentEditor()) return;
+        this.empView = 'projects';
         this.projectEditorOpen = true;
         this.projectEditId = id;
         this.renderEmployment();
@@ -1140,6 +1300,7 @@ export const employmentModule = {
     },
 
     cancelProjectEditor: function() {
+        if (!this._discardEmploymentEditor()) return;
         this.projectEditorOpen = false;
         this.projectEditId = null;
         this.renderEmployment();
@@ -1159,7 +1320,7 @@ export const employmentModule = {
         const budget = getSemesterBudget(project, this._semesterKey());
         const colorOptions = PROJECT_COLOR_OPTIONS.map(option => `
             <label class="project-color-option project-color-${option.key}">
-                <input type="radio" name="project-color-key" value="${option.key}" ${project.color_key === option.key ? 'checked' : ''}
+                <input type="radio" id="project-color-${option.key}" name="project-color-key" value="${option.key}" ${project.color_key === option.key ? 'checked' : ''}
                     onchange="app.updateProjectColorSelection('${option.key}')">
                 <span class="project-color-swatch" aria-hidden="true"></span>
                 <span>${option.label}</span>
@@ -1168,7 +1329,7 @@ export const employmentModule = {
         const selectedColorLabel = PROJECT_COLOR_OPTIONS.find(option => option.key === project.color_key)?.label
             || PROJECT_COLOR_OPTIONS[0].label;
 
-        return `<section id="project-inline-editor" class="inline-editor" aria-labelledby="project-editor-title">
+        return `<section id="project-inline-editor" class="inline-editor" data-draft-key="project-${escapeHtml(this.projectEditId || 'new')}-${this._semesterKey()}" aria-labelledby="project-editor-title">
             <div class="inline-editor-heading"><div><h3 id="project-editor-title">${this.projectEditId ? '編輯' : '新增'}計畫</h3><p>本學期業務費：${semesterLabel(this.empAcademicYear, this.empTerm)}</p></div><button type="button" class="btn btn-secondary btn-sm" onclick="app.cancelProjectEditor()">取消</button></div>
             <input type="hidden" id="project-edit-id" value="${this.projectEditId || ''}">
             <div class="inline-editor-grid">
@@ -1200,8 +1361,9 @@ export const employmentModule = {
     },
 
     saveProject: async function() {
+        if (this.currentRole !== 'Admin' || this._employmentSaveToken) return;
         const editId = document.getElementById('project-edit-id').value;
-        const id = editId || generateId('PRJ');
+        const id = editId || (this._pendingProjectId ||= generateId('PRJ'));
         const existing = editId ? this._projectData().find(item => item._id === editId) : null;
         const name = document.getElementById('project-name').value.trim();
         const start = this._readRocMonth('project-start');
@@ -1235,19 +1397,10 @@ export const employmentModule = {
             updated_at: new Date().toISOString()
         };
 
-        const button = document.getElementById('btn-save-project');
-        button.disabled = true;
-        button.textContent = '儲存中...';
-        try {
-            await setDoc(doc(db, 'projects', id), payload, { merge: true });
-            this.projectEditorOpen = false;
-            this.projectEditId = null;
-            this.showNotification('計畫已儲存', 'success');
-        } catch (error) {
-            this.showNotification('儲存失敗：' + error.message, 'error');
-            button.disabled = false;
-            button.textContent = '儲存計畫';
-        }
+        const semester = this._semesterKey();
+        await this._runEmploymentSave('btn-save-project',
+            () => saveProjectDetails(db, id, payload, Boolean(existing), semester, budgetText === '' ? null : toInteger(budgetText)),
+            { text: '計畫已儲存' });
     },
 
     exportEmploymentExcel: async function() {

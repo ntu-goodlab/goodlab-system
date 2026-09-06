@@ -57,12 +57,15 @@ export const instrumentsModule = {
                     render: row => {
                         const color = row.Is_Active ? 'var(--success)' : 'var(--danger)';
                         const title = row.Is_Active ? '正常運作' : '報廢停用';
-                        return `<i class="ph-fill ph-circle" style="color:${color}; font-size:1.2rem;" title="${title}"></i>`;
+                        return `<span class="instrument-status" style="color:${color}"><i class="ph-fill ph-circle" aria-hidden="true"></i>${title}</span>`;
                     } 
                 },
                 { 
                     render: row => {
                         let html = `<strong>${escapeHtml(row.Name)}</strong>`;
+                        const manualUrl = /^https?:\/\/[^\s]+$/i.test(String(row.Manual_Link || '').trim()) ? String(row.Manual_Link).trim() : '';
+                        if (manualUrl) html += `<a class="instrument-manual-link" href="${escapeHtml(manualUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"><i class="ph ph-book-open" aria-hidden="true"></i>使用手冊<span class="sr-only">：${escapeHtml(row.Name)}，開啟新分頁</span></a>`;
+                        html += `<details class="instrument-contact-mobile"><summary>負責人與聯絡資訊</summary><p>負責人：${escapeHtml(this.getMemberName(row.Manager_ID) || '尚未指定')}</p><p>廠商：${escapeHtml(row.Vendor_Info || '尚未填寫')}</p></details>`;
                         if (row.Linked_Property_IDs && row.Linked_Property_IDs.length > 0) {
                             html += `<div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">`;
                             row.Linked_Property_IDs.forEach(pid => {
@@ -263,8 +266,15 @@ export const instrumentsModule = {
     },
 
     saveInstrument: async function() {
+        if (this.currentRole !== 'Admin') return;
         const id = document.getElementById('Instrument_ID').value;
         if (!id) { alert("請輸入儀器 ID"); return; }
+        const manual = document.getElementById('Manual_Link');
+        if (manual?.value.trim() && !/^https?:\/\/[^\s]+$/i.test(manual.value.trim())) {
+            this.showNotification('手冊網址請使用完整的 https:// 或 http:// 連結。', 'error');
+            manual.focus();
+            return;
+        }
         
         const payload = {};
         // ★ 修復核心：強制手動將 ID 寫入，避免被過濾器漏掉
@@ -294,6 +304,8 @@ export const instrumentsModule = {
         try {
             // ★ 修復：使用絕對存在的 id 變數作為文件路徑
             await setDoc(doc(db, "instruments", id), payload);
+            this.tempLinkedPropId = null;
+            this.currentEditingInstTags = [];
             
             this.closeModal('inst-modal');
             this.showNotification("儀器儲存成功", "success");
@@ -304,8 +316,6 @@ export const instrumentsModule = {
         } finally {
             btn.innerText = "儲存";
             btn.disabled = false;
-            this.tempLinkedPropId = null;
-            this.currentEditingInstTags = [];
         }
     }
 };

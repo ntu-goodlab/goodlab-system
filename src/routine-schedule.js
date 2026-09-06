@@ -85,10 +85,13 @@ export function calculateNextScheduledDue(routine, completedOn) {
     if (!completedDate) return '';
 
     const anchor = routine.schedule_anchor || routine.next_due || routine.last_done || completedOn;
+    // 提前完成的是目前這一期；下一個日期也必須晚於本期到期日。
+    const currentDue = parseLocalDate(routine.next_due);
+    const advancePast = currentDue && currentDue > completedDate ? currentDue : completedDate;
     let multiplier = 1;
     let candidate = addRoutineInterval(anchor, routine, multiplier);
 
-    while (candidate && parseLocalDate(candidate) <= completedDate && multiplier < 10000) {
+    while (candidate && parseLocalDate(candidate) <= advancePast && multiplier < 10000) {
         multiplier += 1;
         candidate = addRoutineInterval(anchor, routine, multiplier);
     }

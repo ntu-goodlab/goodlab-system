@@ -13,6 +13,7 @@ import { LOCATIONS, LOCATIONS_WITH_OTHER } from './constants.js';
 
 // === 功能模組 ===
 import { authModule } from './auth.js';
+import { deleteMemberAccess } from './member-access.js';
 import { membersModule } from './members.js';
 import { instrumentsModule } from './instruments.js';
 import { logsModule } from './logs.js';
@@ -55,7 +56,7 @@ const app = {
     guestGuardHtml: `<tr><td colspan="10" style="text-align:center; padding: 50px 20px; background: #f8fafc;">
         <i class="ph-fill ph-lock-key" style="font-size: 3.5rem; color: #cbd5e1; margin-bottom: 15px; display: block;"></i>
         <div style="font-weight: 700; font-size: 1.2rem; color: var(--text-main);">權限不足，資料已鎖定</div>
-        <div style="font-size: 0.95rem; color: var(--text-muted); margin-top: 6px;">請點擊右上角「Google 登入」並完成學號綁定，以解鎖實驗室機密資料。</div>
+        <div style="font-size: 0.95rem; color: var(--text-muted); margin-top: 6px;">請點擊右上角「Google 登入」並完成學號綁定，以解鎖實驗室資料。</div>
     </td></tr>`,
 
     // --- 頁面說明文案 ---
@@ -133,6 +134,7 @@ const app = {
 
     // 一般成員看到的是任務導向說明，避免把 Admin 操作細節混在一起。
     userHelpDocs: {
+        'logs': `<p>可搜尋並查看故障描述、處理方式與結案狀態。紀錄由管理員新增與修改；如有補充，請聯絡設備負責人。</p>`,
         'overview': `
             <p>這裡集中顯示本週值日、公告、Meeting、近期行事與實驗室狀況。</p>
             <ul><li>點選值日區塊可查看本週工作。</li><li>維修與行事摘要會隨資料更新，不必等每週信件。</li><li>公告若附有連結，可直接由公告開啟。</li></ul>`,
@@ -179,7 +181,11 @@ const app = {
         if (btn) { btn.innerText = "刪除中..."; btn.disabled = true; }
 
         try {
-            await deleteDoc(doc(db, collectionName, id));
+            if (collectionName === 'members') {
+                await deleteMemberAccess(db, id, this.currentUser?.uid);
+            } else {
+                await deleteDoc(doc(db, collectionName, id));
+            }
             this.closeModal(modalId);
             this.showNotification("刪除成功", 'success');
         } catch (e) {
@@ -205,75 +211,14 @@ const app = {
             return ['overview', 'logs', 'routine', 'duty', 'duty-history', 'inventory', 'accounting', 'members', 'employment', 'instruments'];
         }
         if (this.currentRole === 'User') {
-            return ['overview', 'duty', 'duty-history', 'inventory', 'members', 'instruments'];
+            return ['overview', 'logs', 'duty', 'duty-history', 'inventory', 'members', 'instruments'];
         }
         return ['welcome'];
     },
 
-    renderOverview: function() {
-        const container = document.getElementById('overview-content');
-        if (!container || !this.currentMember) return;
-
-        const openLogs = this.data.logs.filter(item => item.Status === 'Open').length;
-        const duty = typeof this._getCurrentDutyPerson === 'function' ? this._getCurrentDutyPerson() : null;
-        const dutyName = duty && duty.member ? duty.member.Name_Ch : '尚未排定';
-        const escapeText = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
-            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-        })[character]);
-        const safeDutyName = escapeText(dutyName);
-        const isAdmin = this.currentRole === 'Admin';
-        const accounting = isAdmin && typeof this.getAccountingSummary === 'function'
-            ? this.getAccountingSummary()
-            : null;
-        const routines = isAdmin && typeof this.getUpcomingRoutines === 'function'
-            ? this.getUpcomingRoutines(6)
-            : [];
-        const now = new Date();
-        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-        const routineRows = routines.map(routine => {
-            let stateClass = 'routine-status-ok';
-            let stateText = routine.next_due;
-            if (routine.next_due < today) {
-                stateClass = 'routine-status-overdue';
-                stateText = `${routine.next_due} · 已逾期`;
-            } else if (routine.next_due === today) {
-                stateClass = 'routine-status-warn';
-                stateText = `${routine.next_due} · 今天`;
-            }
-            return `<button type="button" class="overview-routine-row" onclick="app.switchTab('routine')">
-                <span>${escapeText(routine.name)}</span>
-                <span class="${stateClass}">${stateText}</span>
-            </button>`;
-        }).join('');
-
-        container.innerHTML = `
-            <div class="overview-kpis">
-                ${isAdmin ? `<button class="overview-card overview-card-action" onclick="app.switchTab('accounting')">
-                    <span class="overview-card-icon"><i class="ph ph-wallet" aria-hidden="true"></i></span>
-                    <span class="overview-card-body"><span class="overview-card-label">帳務可用餘額</span><strong>$${(accounting?.totalBalance || 0).toLocaleString('zh-TW')}</strong><span>戶頭與現金合計</span></span>
-                </button>` : ''}
-                <button class="overview-card overview-card-action" onclick="app.switchTab('logs')">
-                    <span class="overview-card-icon overview-card-icon-danger"><i class="ph ph-wrench" aria-hidden="true"></i></span>
-                    <span class="overview-card-body"><span class="overview-card-label">待處理維修</span><strong>${openLogs}</strong><span>查看維修紀錄</span></span>
-                </button>
-                <button class="overview-card overview-card-action" onclick="app.switchTab('duty')">
-                    <span class="overview-card-icon overview-card-icon-success"><i class="ph ph-broom" aria-hidden="true"></i></span>
-                    <span class="overview-card-body"><span class="overview-card-label">本週值日生</span><strong class="overview-card-name">${safeDutyName}</strong><span>查看本週工作</span></span>
-                </button>
-            </div>
-            ${isAdmin ? `<section class="overview-panel" aria-labelledby="overview-routine-heading">
-                <div class="overview-panel-header">
-                    <div><h3 id="overview-routine-heading">近期實驗室行事</h3><p>依日期排序</p></div>
-                    <button class="btn btn-secondary btn-sm" onclick="app.switchTab('routine')">查看全部</button>
-                </div>
-                <div class="overview-routine-list">${routineRows || '<div class="empty">目前沒有近期行事</div>'}</div>
-            </section>` : ''}`;
-    },
-
-    // --- 頁面切換 ---
     switchTab: function(tabId, fromRoute = false) {
         if (!this.getAllowedTabs().includes(tabId)) return;
+        if (!this.guardEmploymentNavigation(tabId, fromRoute)) return;
 
         document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
         const targetPage = document.getElementById('page-' + tabId);
@@ -302,7 +247,7 @@ const app = {
             'instruments': '儀器設備',
             'logs': '維修紀錄',
             'accounting': '公積金報帳',
-            'inventory': '產編清點',
+            'inventory': '財產清冊',
             'duty': '值日生工作',
             'duty-history': '值日生執行紀錄',
             'routine': '實驗室行事',
@@ -322,7 +267,7 @@ const app = {
             'duty': () => this.renderDuty(),
             'duty-history': () => this.renderDutyHistory(),
             'routine': () => this.renderRoutine(),
-            'employment': () => this.renderEmployment()
+            'employment': () => this.renderEmployment({ preserveDrafts: true })
         };
         if (renderMap[tabId]) renderMap[tabId]();
 
@@ -362,8 +307,8 @@ const app = {
                 source: () => query(collection(db, 'bulletins'), where('published', '==', true)),
                 onData: () => this.renderOverview()
             },
-            projects: { dataKey: 'projects', withId: true, onData: () => this.renderEmployment() },
-            employments: { dataKey: 'employments', withId: true, onData: () => this.renderEmployment() }
+            projects: { dataKey: 'projects', withId: true, onData: () => this.renderEmployment({ preserveDrafts: true }) },
+            employments: { dataKey: 'employments', withId: true, onData: () => this.renderEmployment({ preserveDrafts: true }) }
         };
     },
 
@@ -371,7 +316,7 @@ const app = {
         const allowedByProfile = {
             Anonymous: [],
             Guest: ['members'],
-            User: ['members', 'instruments', 'inventory', 'duty_records', 'public_routines', 'public_bulletins'],
+            User: ['members', 'instruments', 'logs', 'inventory', 'duty_records', 'public_routines', 'public_bulletins'],
             Admin: ['members', 'instruments', 'logs', 'inventory', 'duty_records', 'accounting', 'routines', 'bulletins', 'projects', 'employments']
         };
         const allowed = new Set(allowedByProfile[profile] || []);
@@ -395,6 +340,7 @@ const app = {
                 this.realtimeLoadState[name] = 'loaded';
                 this.data[item.dataKey] = snapshot.docs.map(document => item.withId ? ({ _id: document.id, ...document.data() }) : document.data());
                 item.onData();
+                this.renderDataHealth();
                 const migrationPanel = document.getElementById('member-id-migration');
                 if (migrationPanel && !migrationPanel.classList.contains('hidden')) {
                     this.updateMemberIdMigrationPreview?.();
@@ -402,16 +348,15 @@ const app = {
             }, error => {
                 this.realtimeLoadState[name] = 'error';
                 this.data[item.dataKey] = [];
-                if (name === 'members') this.membersLoaded = true;
+                if (name === 'members') this.membersLoaded = false;
                 console.warn(`[GOODLAB] ${name} listener unavailable: ${error.code || error.message}`);
                 if (this.currentUser) {
                     const dataLabel = item.userFacingName || item.collectionName || name;
-                    const permissionHelp = error.code === 'permission-denied' && name === 'public_routines'
-                        ? 'Firebase 的一般成員行事讀取規則尚未發布，請 Admin 發布最新 firestore.rules 後再重新整理。'
-                        : '請重新整理；若仍失敗，請將此訊息提供給 Admin。';
+                    const permissionHelp = '請使用頁面上方的重試；若仍失敗，請聯絡管理員確認授權。';
                     this.showNotification(`無法載入${dataLabel}：${permissionHelp}`, 'error', 8000);
                 }
                 item.onData();
+                this.renderDataHealth();
                 const migrationPanel = document.getElementById('member-id-migration');
                 if (migrationPanel && !migrationPanel.classList.contains('hidden')) {
                     this.updateMemberIdMigrationPreview?.();
@@ -421,6 +366,37 @@ const app = {
         });
 
         this.realtimeProfile = profile;
+        this.renderDataHealth();
+    },
+
+    renderDataHealth: function() {
+        let region = document.getElementById('data-health');
+        if (!region) {
+            region = document.createElement('div');
+            region.id = 'data-health';
+            region.className = 'data-health';
+            region.setAttribute('role', 'status');
+            document.querySelector('.page-container')?.prepend(region);
+        }
+        region.replaceChildren();
+        const labels = { members: '成員', inventory: '財產', duty_records: '值日', accounting: '帳務',
+            instruments: '儀器', logs: '維修', routines: '行事', public_routines: '行事',
+            bulletins: '公告', public_bulletins: '公告', projects: '計畫', employments: '聘僱' };
+        for (const [name, state] of Object.entries(this.realtimeLoadState)) {
+            if (state !== 'error') continue;
+            const row = document.createElement('div');
+            const message = document.createElement('span');
+            message.textContent = `${labels[name] || name}資料載入失敗，目前顯示不完整。`;
+            const retry = document.createElement('button');
+            retry.type = 'button'; retry.className = 'btn btn-secondary btn-sm'; retry.textContent = '重試';
+            retry.addEventListener('click', () => {
+                this.realtimeUnsubscribers.get(name)?.();
+                this.realtimeUnsubscribers.delete(name);
+                this.syncRealtimeListeners(this.realtimeProfile);
+            });
+            row.append(message, retry); region.append(row);
+        }
+        region.hidden = !region.childElementCount;
     },
 
     setupRealtimeListeners: function() {
@@ -464,7 +440,8 @@ const app = {
                 if (isOpen && !this.modalReturnFocus.has(modal.id)) {
                     this.modalReturnFocus.set(modal.id, document.activeElement);
                     requestAnimationFrame(() => {
-                        const target = modal.querySelector('input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex="0"]');
+                        const target = modal.querySelector('input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])')
+                            || modal.querySelector('button:not([disabled]), [tabindex="0"]');
                         if (target) target.focus();
                     });
                 } else if (!isOpen && this.modalReturnFocus.has(modal.id)) {
@@ -492,6 +469,21 @@ const app = {
     // --- 初始化 ---
     init: function() {
         this.populateLocationSelects();
+        document.querySelectorAll('th[onclick]').forEach(header => {
+            const button = document.createElement('button');
+            button.type = 'button'; button.className = 'table-sort';
+            button.textContent = header.textContent;
+            button.setAttribute('onclick', header.getAttribute('onclick'));
+            button.addEventListener('click', () => {
+                const handler = button.getAttribute('onclick');
+                const state = handler.includes('sortInventory') ? this.invSortState
+                    : handler.includes('sortLogs') ? this.logSortState : this.sortState;
+                const next = state.direction === 'asc' ? 'ascending' : 'descending';
+                header.closest('table').querySelectorAll('th[aria-sort]').forEach(item => item.removeAttribute('aria-sort'));
+                header.setAttribute('aria-sort', next);
+            });
+            header.removeAttribute('onclick'); header.replaceChildren(button);
+        });
         this.setupModalEvents();
         this.setupAutoStatus();
         this.setupLogAutoStatus();
@@ -541,6 +533,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('popstate', () => app.routeFromHash());
+window.addEventListener('beforeunload', event => app.protectEmploymentUnload(event));
 
 window.app = app;
 

@@ -25,13 +25,13 @@ export function resolveProjectColorKey(project = {}) {
     return PROJECT_COLOR_OPTIONS[stableHash(seed) % PROJECT_COLOR_OPTIONS.length].key;
 }
 
-export function buildScheduleSegments(schedule = {}, visibleMonths = []) {
+export function buildScheduleSegments(schedule = {}, visibleMonths = [], { includeZero = false } = {}) {
     const segments = [];
     let current = null;
 
     visibleMonths.forEach((month, index) => {
         const amount = schedule[month];
-        const active = amount !== undefined && Number(amount) > 0;
+        const active = amount !== undefined && (Number(amount) > 0 || (includeZero && Number(amount) === 0));
 
         if (!active) {
             if (current) {

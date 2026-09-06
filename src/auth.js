@@ -2,7 +2,7 @@
  * GOODLAB — 認證與權限模組
  * Phase 4：處理 Google 登入/登出、學號綁定、角色檢查與側邊欄 UI 控制。
  */
-import { auth, provider, db, doc, getDoc, setDoc, updateDoc, signInWithPopup, onAuthStateChanged, signOut } from './firebase.js';
+import { auth, provider, db, doc, onSnapshot, updateDoc, signInWithPopup, onAuthStateChanged, signOut } from './firebase.js';
 import { showNotification, closeModal } from './ui.js';
 import { escapeHtml } from './utils.js';
 import { getMobileNavigationLayout } from './mobile-navigation.js';
@@ -11,37 +11,31 @@ import { normalizeStudentId } from './member-id-migration.js';
 export const authModule = {
 
     _googleIdentitySyncUid: null,
-    _adminRegistryUid: null,
-    _adminRegistryPromise: null,
+    _adminRegistryUnsubscribe: null,
+    _adminRegistry: null,
+    _adminRegistryLoaded: false,
+    _adminAccessWarning: null,
 
-    _ensureAdminRegistry: function(member) {
-        const uid = this.currentUser?.uid;
-        if (!uid || member?.Role !== 'Admin' || member?.Google_UID !== uid) {
-            return Promise.reject(new Error('目前登入帳號與 Admin 成員資料不一致'));
-        }
-        if (this._adminRegistryUid === uid && this._adminRegistryPromise) {
-            return this._adminRegistryPromise;
-        }
-
-        const adminRef = doc(db, 'admins', uid);
-        const promise = (async () => {
-            const snapshot = await getDoc(adminRef);
-            if (snapshot.exists()) return;
-            await setDoc(adminRef, {
-                student_id: member.Student_ID,
-                registered_at: new Date().toISOString()
-            });
-        })();
-
-        this._adminRegistryUid = uid;
-        this._adminRegistryPromise = promise.catch(error => {
-            if (this._adminRegistryUid === uid) {
-                this._adminRegistryUid = null;
-                this._adminRegistryPromise = null;
-            }
-            throw error;
+    // Authentication only reads authorization; it must never grant it.
+    watchOwnAdminRegistry: function(uid) {
+        this._adminRegistryUnsubscribe?.();
+        this._adminRegistryUnsubscribe = null;
+        this._adminRegistry = null;
+        this._adminRegistryLoaded = false;
+        this._adminAccessWarning = null;
+        if (!uid) return;
+        this._adminRegistryUnsubscribe = onSnapshot(doc(db, 'admins', uid), snapshot => {
+            if (this.currentUser?.uid !== uid) return;
+            this._adminRegistry = snapshot.exists() ? snapshot.data() : null;
+            this._adminRegistryLoaded = true;
+            this.checkUserRole();
+        }, error => {
+            if (this.currentUser?.uid !== uid) return;
+            this._adminRegistry = null;
+            this._adminRegistryLoaded = true;
+            console.warn('[GOODLAB] 無法確認管理授權：', error.code || error.message);
+            this.checkUserRole();
         });
-        return this._adminRegistryPromise;
     },
 
     // === 登入 ===
@@ -55,6 +49,7 @@ export const authModule = {
 
     // === 登出 ===
     logout: async function() {
+        if (!this.confirmEmploymentLeave()) return;
         try {
             await signOut(auth);
         } catch (error) {
@@ -67,13 +62,29 @@ export const authModule = {
         onAuthStateChanged(auth, (user) => {
             const previousUid = this.currentUser ? this.currentUser.uid : null;
             if (!user || previousUid !== user.uid) {
+                this.resetEmploymentEditors();
+                this._employmentSaveToken = null;
                 this._googleIdentitySyncUid = null;
-                this._adminRegistryUid = null;
-                this._adminRegistryPromise = null;
+                this.syncRealtimeListeners('Anonymous');
+                this.overviewEditorOpen = false;
+                this.overviewMeetingEditorOpen = false;
+                this.overviewNoticeEditId = null;
+                this.employmentPersonEditorOpen = false;
+                this.employmentPersonDrafts = [];
+                this.projectEditorOpen = false;
+                this.empMonthEditor = null;
+                for (const id of ['bulletin-editor-modal', 'log-details-modal', 'routine-edit-modal']) {
+                    document.getElementById(id)?.remove();
+                }
+                for (const id of ['overview-content', 'duty-content', 'employment-content']) {
+                    const region = document.getElementById(id);
+                    if (region) region.innerHTML = '';
+                }
             }
             this.currentUser = user;
             this.currentMember = null;
             this.currentRole = 'Guest';
+            if (!user || previousUid !== user.uid) this.watchOwnAdminRegistry(user?.uid);
 
             if (user) {
                 if (previousUid !== user.uid) this.membersLoaded = false;
@@ -122,29 +133,23 @@ export const authModule = {
 
         if (memberData) {
             // 已綁定成功 (User / Admin)
-            this.currentRole = memberData.Role || 'User';
+            const adminAuthorized = memberData.Role === 'Admin'
+                && this._adminRegistryLoaded
+                && this._adminRegistry?.student_id === memberData.Student_ID;
+            this.currentRole = adminAuthorized ? 'Admin' : 'User';
             this.currentMember = memberData; // Phase 5: 儲存完整 member 資料
             const roleLabel = this.currentRole === 'Admin' ? '管理員' : '成員';
             if(userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${roleLabel}`;
             closeModal('bind-modal');
 
-            if (this.currentRole === 'Admin') {
-                const expectedUid = this.currentUser.uid;
-                if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · 正在確認管理權限`;
-                try {
-                    await this._ensureAdminRegistry(memberData);
-                } catch (error) {
-                    if (this.currentUser?.uid !== expectedUid) return;
-                    this.currentRole = 'User';
-                    this.syncRealtimeListeners('User');
-                    this.updateSidebarUI();
-                    this.showNotification('尚未建立 Admin 資料權限。請由系統管理員發布最新 firestore.rules，再重新整理頁面。', 'error', 10000);
-                    if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · 管理權限尚未啟用`;
-                    console.warn('[GOODLAB] Admin registry unavailable:', error.code || error.message);
-                    return;
+            if (memberData.Role === 'Admin' && !adminAuthorized) {
+                if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${this._adminRegistryLoaded ? '管理權限尚未啟用' : '正在確認管理權限'}`;
+                if (this._adminRegistryLoaded && this._adminAccessWarning !== memberData.Student_ID) {
+                    this._adminAccessWarning = memberData.Student_ID;
+                    this.showNotification('管理權限尚未啟用。請既有管理員核對你的 Google 綁定帳號，再重新儲存成員的 Admin 權限。', 'warning', 10000);
                 }
-                if (this.currentUser?.uid !== expectedUid) return;
-                if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${roleLabel}`;
+            } else {
+                this._adminAccessWarning = null;
             }
 
             this.syncRealtimeListeners(this.currentRole);
@@ -208,6 +213,11 @@ export const authModule = {
 
         if (!member) {
             this.showNotification("找不到此學號。請 Admin 確認成員資料內的 Student_ID 欄位與輸入學號一致，再重新整理後綁定。", "error", 8000);
+            return;
+        }
+
+        if ((member.Role || 'User') !== 'User') {
+            this.showNotification('此資料預設為管理員，不能自行認領。請既有管理員先改為一般成員，待你完成綁定並核對帳號後再授權。', 'warning', 10000);
             return;
         }
 
@@ -321,7 +331,7 @@ export const authModule = {
 
         if (this.currentRole === 'User') {
             const pageContent = this.userHelpDocs?.[tabName] || '<p>本頁目前沒有額外操作說明。</p>';
-            const pageNames = { overview: '實驗室總覽', duty: '值日生工作', 'duty-history': '值日生執行紀錄', inventory: '產編清點', instruments: '儀器設備', members: '實驗室成員' };
+            const pageNames = { overview: '實驗室總覽', duty: '值日生工作', 'duty-history': '值日生執行紀錄', inventory: '財產清冊', instruments: '儀器設備', members: '實驗室成員' };
             if (title) title.textContent = 'GOODLAB 使用說明';
             body.innerHTML = `<section class="help-current-page"><span class="help-eyebrow">目前頁面</span><h4>${escapeHtml(pageNames[tabName] || 'GOODLAB')}</h4>${pageContent}</section>${commonQuestions}`;
         } else if (this.currentRole === 'Admin') {

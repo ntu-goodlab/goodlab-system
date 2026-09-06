@@ -8,7 +8,17 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn()
-        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && adminMemberMatches(get(/databases/$(database)/documents/admins/$(request.auth.uid)).data);
+    }
+
+    // A stale registry entry must never keep granting access after revocation.
+    function adminMemberMatches(entry) {
+      let studentId = entry.get('student_id', '');
+      return studentId is string && studentId.size() > 0
+        && exists(/databases/$(database)/documents/members/$(studentId))
+        && get(/databases/$(database)/documents/members/$(studentId)).data.Google_UID == request.auth.uid
+        && get(/databases/$(database)/documents/members/$(studentId)).data.Role == 'Admin';
     }
 
     function validAdminRegistryEntry(uid) {
@@ -19,9 +29,8 @@ service cloud.firestore {
         && request.resource.data.keys().hasAll(['student_id', 'registered_at'])
         && studentId is string
         && request.resource.data.registered_at is string
-        && exists(/databases/$(database)/documents/members/$(studentId))
-        && get(/databases/$(database)/documents/members/$(studentId)).data.Google_UID == uid
-        && get(/databases/$(database)/documents/members/$(studentId)).data.Role == 'Admin';
+        && getAfter(/databases/$(database)/documents/members/$(studentId)).data.Google_UID == uid
+        && getAfter(/databases/$(database)/documents/members/$(studentId)).data.Role == 'Admin';
     }
 
     function ownsMember(studentId) {
@@ -38,7 +47,9 @@ service cloud.firestore {
     }
 
     function validMemberBinding() {
-      return request.auth.token.email_verified == true
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && resource.data.get('Role', 'User') == 'User'
         && (!('Google_UID' in resource.data)
           || resource.data.Google_UID == null
           || resource.data.Google_UID == '')
@@ -136,6 +147,29 @@ service cloud.firestore {
         );
     }
 
+    function completeDutyChecklist(data) {
+      let cleaning = data.get('cleaning', {});
+      let supplies = data.get('supplies', {});
+      let ready = ['sufficient', 'ordered', true];
+      return cleaning.get('sweep', false) == true
+        && cleaning.get('trash', false) == true
+        && cleaning.get('supply_check', false) == true
+        && cleaning.get('water', false) == true
+        && cleaning.get('fingerprint', false) == true
+        && supplies.get('acetone', null) in ready
+        && supplies.get('methanol', null) in ready
+        && supplies.get('detergent', null) in ready
+        && supplies.get('n2_tank', null) in ready
+        && supplies.get('wiper', null) in ready
+        && supplies.get('glass_slide', null) in ready
+        && supplies.get('gloves_s', null) in ready
+        && supplies.get('gloves_m', null) in ready
+        && supplies.get('gloves_l', null) in ready
+        && supplies.get('cotton_swab', null) in ready
+        && supplies.get('aluminum_foil', null) in ready
+        && supplies.get('pe_gloves', null) in ready;
+    }
+
     match /members/{memberId} {
       // 尚未綁定的登入者必須讀取名單才能完成首次綁定。
       allow read: if isSignedIn();
@@ -144,11 +178,11 @@ service cloud.firestore {
     }
 
     match /admins/{uid} {
-      allow read: if isSignedIn();
-      // 已由既有 Admin 設定角色、且完成 Google 綁定者，可安全登記自己的 UID。
-      // 一般成員無法自行把 members.Role 改成 Admin，因此不會藉此升權。
-      allow create: if validAdminRegistryEntry(uid)
-        && (isAdmin() || uid == request.auth.uid);
+      allow get: if isSignedIn() && (uid == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      // Only an already-authorized administrator may grant access.
+      // getAfter validates the member and registry written in the same transaction.
+      allow create: if isAdmin() && validAdminRegistryEntry(uid);
       allow update: if isAdmin() && validAdminRegistryEntry(uid);
       allow delete: if isAdmin();
     }
@@ -159,7 +193,8 @@ service cloud.firestore {
     }
 
     match /logs/{logId} {
-      allow read, create, update, delete: if isAdmin();
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
     }
 
     match /inventory/{propId} {
@@ -171,8 +206,8 @@ service cloud.firestore {
     match /duty_records/{weekId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && validDutyCreate(weekId);
-      allow update: if isAdmin()
-        || (isSignedIn() && validDutyAssigneeUpdate());
+      allow update: if (isAdmin() || (isSignedIn() && validDutyAssigneeUpdate()))
+        && (request.resource.data.submitted != true || completeDutyChecklist(request.resource.data));
       allow delete: if isAdmin();
     }
 

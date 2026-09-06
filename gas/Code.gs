@@ -64,7 +64,7 @@ function testDutyReminderToMe() {
     const weekId = mondayDateKey_(new Date());
     const members = fetchCollection_('members');
     const dutyRecords = fetchCollection_('duty_records');
-    const record = resolveDutyRecordForWeek_(dutyRecords, weekId);
+    const record = resolveDutyRecordForWeek_(dutyRecords, weekId, members);
     const dutyRoster = getDutyRoster_(members);
     const person = record && record.assigned_to
       ? dutyRoster.find(function (member) { return member.Student_ID === record.assigned_to; })
@@ -174,7 +174,7 @@ function checkDutyReminder() {
     const members = fetchCollection_('members');
     const dutyRecords = fetchCollection_('duty_records');
     const weekId = mondayDateKey_(new Date());
-    const record = resolveDutyRecordForWeek_(dutyRecords, weekId);
+    const record = resolveDutyRecordForWeek_(dutyRecords, weekId, members);
 
     if (!record || !record.assigned_to) {
       console.log('找不到本週值日生或可順延的未完成紀錄，不寄信。');
@@ -521,7 +521,7 @@ function verifyLaunchReadiness() {
   return report;
 }
 
-function resolveDutyRecordForWeek_(records, weekId) {
+function resolveDutyRecordForWeek_(records, weekId, members) {
   const currentRecord = records.find(function (item) { return item._id === weekId; }) || null;
   if (currentRecord && (
     currentRecord.submitted
@@ -536,7 +536,16 @@ function resolveDutyRecordForWeek_(records, weekId) {
   const previousRecord = records
     .filter(function (item) { return item._id < weekId; })
     .sort(function (a, b) { return String(b._id).localeCompare(String(a._id)); })[0] || null;
-  if (!previousRecord || previousRecord.submitted) return currentRecord;
+  if (!previousRecord || previousRecord.submitted) {
+    if (currentRecord) return currentRecord;
+    const roster = getDutyRoster_(members || []);
+    const nextMember = previousRecord
+      ? getNextDutyMember_(previousRecord, members || [], records)
+      : roster[0];
+    if (!nextMember) return null;
+    return { _id: weekId, week_start: weekId, scheduled_to: nextMember.Student_ID,
+      assigned_to: nextMember.Student_ID, assignment_source: 'auto', submitted: false };
+  }
 
   const scheduledTo = previousRecord.scheduled_to || previousRecord.assigned_to;
   const assignedTo = previousRecord.assigned_to || scheduledTo;

@@ -13,6 +13,7 @@ import {
     validateMemberIdMigration
 } from './member-id-migration.js';
 import { MEMBER_GROUPS, memberGroupKey, compareMembersForDirectory } from './member-directory.js';
+import { saveMemberAccess, unbindMemberAccess, syncMemberAdminRegistry } from './member-access.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -441,6 +442,18 @@ export const membersModule = {
                 const oldMemberSnapshot = await transaction.get(oldMemberRef);
                 const newMemberSnapshot = await transaction.get(newMemberRef);
 
+                // 關聯資料也加入交易讀取集合，防止覆寫確認後別人改過的歸屬。
+                for (const operation of plan.operations) {
+                    const related = await transaction.get(doc(db, operation.collection, operation.documentId));
+                    if (!related.exists()) throw new Error('關聯資料已變更，請重新確認轉移預覽。');
+                    for (const field of Object.keys(operation.changes)) {
+                        if (field === 'original_student_id') continue;
+                        if (normalizeStudentId(related.data()[field]) !== oldId) {
+                            throw new Error('關聯資料已變更，請重新確認轉移預覽。');
+                        }
+                    }
+                }
+
                 if (!oldMemberSnapshot.exists()) {
                     throw new Error('原成員資料已不存在，請重新整理。');
                 }
@@ -448,10 +461,14 @@ export const membersModule = {
                     throw new Error('新學號已存在，未執行轉移。');
                 }
 
-                transaction.set(
-                    newMemberRef,
-                    buildMigratedMember(oldMemberSnapshot.data(), migrationOptions)
-                );
+                const before = oldMemberSnapshot.data();
+                const migrated = buildMigratedMember(before, migrationOptions);
+                if (!migrationOptions.preserveGoogleBinding) migrated.Role = 'User';
+                if (before.Google_UID === this.currentUser?.uid && !migrationOptions.preserveGoogleBinding) {
+                    throw new Error('不能在學號異動時解除自己的管理員綁定，請由另一位管理員操作。');
+                }
+                syncMemberAdminRegistry(transaction, db, before, migrated, changedAt);
+                transaction.set(newMemberRef, migrated);
                 plan.operations.forEach(operation => {
                     transaction.update(
                         doc(db, operation.collection, operation.documentId),
@@ -474,40 +491,13 @@ export const membersModule = {
 
     // === 解除 Google 綁定 ===
     unbindMember: async function() {
+        if (this.currentRole !== 'Admin') return;
         const id = document.getElementById('Student_ID').value;
-        if (!confirm("確定要解除這位成員的 Google 綁定嗎？\n他下次登入時需要重新輸入學號。")) return;
-        const member = this.data.members.find(item => normalizeStudentId(item.Student_ID) === normalizeStudentId(id));
-        const previousGoogleUids = [
-            ...(Array.isArray(member?.Previous_Google_UIDs) ? member.Previous_Google_UIDs : []),
-            member?.Google_UID
-        ].filter(Boolean);
-        const previousGoogleEmails = [
-            ...(Array.isArray(member?.Previous_Google_Emails) ? member.Previous_Google_Emails : []),
-            member?.Google_Email
-        ].filter(Boolean);
-        const previousGoogleDisplayNames = [
-            ...(Array.isArray(member?.Previous_Google_Display_Names) ? member.Previous_Google_Display_Names : []),
-            member?.Google_Display_Name
-        ].filter(Boolean);
+        if (!confirm("確定要解除這位成員的 Google 綁定嗎？\n管理權限也會撤銷，重新綁定後須由管理員再次授權。")) return;
         
         try {
-            const memberRef = doc(db, 'members', id);
-            const identityReset = {
-                Google_UID: null,
-                Google_Email: null,
-                Google_Display_Name: null,
-                Previous_Google_UIDs: [...new Set(previousGoogleUids)],
-                Previous_Google_Emails: [...new Set(previousGoogleEmails)],
-                Previous_Google_Display_Names: [...new Set(previousGoogleDisplayNames)]
-            };
-            if (member?.Role === 'Admin' && member.Google_UID) {
-                const batch = writeBatch(db);
-                batch.update(memberRef, identityReset);
-                batch.delete(doc(db, 'admins', member.Google_UID));
-                await batch.commit();
-            } else {
-                await updateDoc(memberRef, identityReset);
-            }
+            await unbindMemberAccess(db, id, this.currentUser?.uid);
+            document.getElementById('Role').value = 'User';
             document.getElementById('Bind_Status').value = "未綁定";
             document.getElementById('Google_Display_Name').value = '';
             document.getElementById('Google_Email').value = '';
@@ -520,6 +510,7 @@ export const membersModule = {
 
     // === 儲存人員資料 ===
     saveMember: async function() {
+        if (this.currentRole !== 'Admin') return;
         const idInput = document.getElementById('Student_ID');
         const id = idInput.value.trim().toLowerCase();
         if (!id) { alert("請輸入學號"); return; }
@@ -538,7 +529,7 @@ export const membersModule = {
         
         const payload = {};
         document.querySelectorAll('#member-modal input, #member-modal select').forEach(el => {
-            if (el.closest('#member-id-migration') || ['Bind_Status', 'Google_Email', 'Google_Display_Name'].includes(el.id)) return;
+            if (el.closest('#member-id-migration') || ['Bind_Status', 'Google_UID', 'Google_Email', 'Google_Display_Name'].includes(el.id)) return;
             let val = el.value.trim();
             if (el.id === 'Email' || el.id === 'Student_ID') val = val.toLowerCase();
             payload[el.id] = val;
@@ -550,34 +541,11 @@ export const membersModule = {
         btn.disabled = true;
 
         try {
-            const memberRef = doc(db, 'members', payload.Student_ID);
-            const shouldRevokeAdmin = Boolean(
-                existingMember?.Google_UID
-                && existingMember.Role === 'Admin'
-                && payload.Role !== 'Admin'
-            );
-            if (shouldRevokeAdmin) {
-                const batch = writeBatch(db);
-                batch.set(memberRef, payload, { merge: true });
-                batch.delete(doc(db, 'admins', existingMember.Google_UID));
-                await batch.commit();
-            } else {
-                await setDoc(memberRef, payload, { merge: true });
-            }
-
-            if (existingMember?.Google_UID && payload.Role === 'Admin') {
-                const adminRef = doc(db, 'admins', existingMember.Google_UID);
-                try {
-                    await setDoc(adminRef, {
-                        student_id: payload.Student_ID,
-                        registered_at: new Date().toISOString()
-                    });
-                } catch (registryError) {
-                    console.warn('[GOODLAB] 成員已儲存，但 Admin registry 同步失敗：', registryError.code || registryError.message);
-                    this.showNotification('成員角色已儲存，但管理權限尚未同步；請先發布最新 firestore.rules。', 'warning', 8000);
-                }
-            }
+            if (payload.Role === 'Admin'
+                && !confirm(`請確認此成員的 Google 綁定帳號確實屬於本人：\n${existingMember?.Google_Email || '尚無信箱紀錄，請先核對 Google UID'}\n\n確定授予／保留管理權限？`)) return;
+            await saveMemberAccess(db, payload.Student_ID, payload, this.currentUser?.uid);
             this.closeModal('member-modal');
+            this.showNotification('成員資料與管理權限已一併儲存。');
         } catch (e) {
             this.showNotification("發生錯誤：" + e.message, 'error');
         } finally {
