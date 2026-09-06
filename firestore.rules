@@ -46,15 +46,10 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/members/$(studentId)).data.Status == 'Active';
     }
 
+    // Student IDs are public identifiers, not proof of identity. Keep self-claim
+    // disabled until verified invitations and a unique UID mapping are implemented.
     function validMemberBinding() {
-      return isSignedIn()
-        && request.auth.token.email_verified == true
-        && resource.data.get('Role', 'User') == 'User'
-        && (!('Google_UID' in resource.data)
-          || resource.data.Google_UID == null
-          || resource.data.Google_UID == '')
-        && request.resource.data.Google_UID == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Google_UID']);
+      return false;
     }
 
     function validGoogleIdentitySync(memberId) {
@@ -118,6 +113,7 @@ service cloud.firestore {
         && request.resource.data.note is string
         && request.resource.data.note.size() <= 1000
         && request.resource.data.created_by_uid == request.auth.uid
+        && validDutyChecklist(request.resource.data)
         && (isAdmin() || (
           ownsMember(request.resource.data.assigned_to)
           && request.resource.data.created_by_student_id == request.resource.data.assigned_to
@@ -129,6 +125,8 @@ service cloud.firestore {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return ownsMember(resource.data.assigned_to)
         && resource.data.submitted == false
+        && resource.data.get('status', 'pending') == 'pending'
+        && validDutyChecklist(request.resource.data)
         && (!('note' in request.resource.data)
           || (request.resource.data.note is string && request.resource.data.note.size() <= 1000))
         && (
@@ -143,8 +141,51 @@ service cloud.firestore {
             changed.hasOnly(['status', 'carried_over_to', 'updated_at'])
             && request.resource.data.status == 'carried_over'
             && request.resource.data.carried_over_to is string
+            && validDutyCarryoverTarget()
           )
         );
+    }
+
+    // Validate the successor, including a new document in the same transaction.
+    function validDutyCarryoverTarget() {
+      let targetId = request.resource.data.carried_over_to;
+      let target = getAfter(/databases/$(database)/documents/duty_records/$(targetId)).data;
+      return targetId > resource.data.week_start
+        && target.week_start == targetId
+        && target.carried_from == resource.data.week_start
+        && target.assigned_to == resource.data.assigned_to
+        && target.assignment_source == 'carryover'
+        && target.status == 'pending'
+        && target.submitted == false;
+    }
+
+    function validDutyChecklist(data) {
+      let cleaning = data.get('cleaning', {});
+      let supplies = data.get('supplies', {});
+      let statuses = [null, false, true, 'sufficient', 'needs_order', 'ordered'];
+      return cleaning is map && supplies is map
+        && cleaning.keys().hasOnly(['sweep', 'trash', 'supply_check', 'water', 'fingerprint'])
+        && cleaning.get('sweep', false) is bool
+        && cleaning.get('trash', false) is bool
+        && cleaning.get('supply_check', false) is bool
+        && cleaning.get('water', false) is bool
+        && cleaning.get('fingerprint', false) is bool
+        && supplies.keys().hasOnly([
+          'acetone', 'methanol', 'detergent', 'n2_tank', 'wiper', 'glass_slide',
+          'gloves_s', 'gloves_m', 'gloves_l', 'cotton_swab', 'aluminum_foil', 'pe_gloves'
+        ])
+        && supplies.get('acetone', null) in statuses
+        && supplies.get('methanol', null) in statuses
+        && supplies.get('detergent', null) in statuses
+        && supplies.get('n2_tank', null) in statuses
+        && supplies.get('wiper', null) in statuses
+        && supplies.get('glass_slide', null) in statuses
+        && supplies.get('gloves_s', null) in statuses
+        && supplies.get('gloves_m', null) in statuses
+        && supplies.get('gloves_l', null) in statuses
+        && supplies.get('cotton_swab', null) in statuses
+        && supplies.get('aluminum_foil', null) in statuses
+        && supplies.get('pe_gloves', null) in statuses;
     }
 
     function completeDutyChecklist(data) {
@@ -171,7 +212,8 @@ service cloud.firestore {
     }
 
     match /members/{memberId} {
-      // 尚未綁定的登入者必須讀取名單才能完成首次綁定。
+      // Legacy full-directory reader. Must be split into private profiles and a
+      // minimal directory before deployment; signed-in is not membership proof.
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || validMemberBinding() || validGoogleIdentitySync(memberId);

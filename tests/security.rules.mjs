@@ -82,11 +82,20 @@ test('清空本學期計畫預算真正移除欄位，保留其他學期與建�
     assert.equal(saved.semester_budgets['115-2'].available, 20000);
     assert.equal(saved.created_at, 'original');
 });
-test('普通綁定通過，未驗證及預設 Admin 認領被拒絕', async () => {
+test('學號不是身分證明：已驗證、未驗證及預設 Admin 的自行認領全部拒絕', async () => {
     await assertFails(updateDoc(doc(authDb('unverified', false), 'members/new-student'), { Google_UID: 'unverified' }));
     await assertFails(updateDoc(doc(authDb('outsider'), 'members/unbound-admin'), { Google_UID: 'outsider' }));
-    await assertSucceeds(updateDoc(doc(authDb('new-user'), 'members/new-student'), { Google_UID: 'new-user' }));
+    await assertFails(updateDoc(doc(authDb('new-user'), 'members/new-student'), { Google_UID: 'new-user' }));
     await assertFails(updateDoc(doc(authDb('outsider'), 'members/new-student'), { Google_UID: 'outsider' }));
+});
+
+test('既有綁定只允許同步本人已驗證 Google 身分，不得偽造信箱或修改綁定', async () => {
+    const ref = doc(authDb('user'), 'members/user-student');
+    await assertSucceeds(updateDoc(ref, { Google_Email: 'user@example.test' }));
+    await assertFails(updateDoc(ref, { Google_Email: 'someone-else@example.test' }));
+    await assertFails(updateDoc(ref, { Google_UID: 'someone-else' }));
+    await assertFails(updateDoc(doc(authDb('user', false), 'members/user-student'), { Google_Email: 'user@example.test' }));
+    await assertFails(updateDoc(doc(authDb('outsider'), 'members/user-student'), { Google_Email: 'outsider@example.test' }));
 });
 test('一般成員不可自行升權、建立白名單或偽造 UID', async () => {
     const db = authDb('user');
@@ -160,6 +169,53 @@ test('值日清單未完成或仍待叫貨不得提交，全部完成才可提�
     await assertSucceeds(updateDoc(doc(db, path), { supplies }));
     await assertSucceeds(updateDoc(doc(db, path), submission));
     await assertFails(updateDoc(doc(db, path), { note: 'changed after submission' }));
+});
+
+test('值日草稿拒絕錯誤型別、任意欄位、超長備註及非指派者', async () => {
+    const path = 'duty_records/2026-09-07';
+    await env.withSecurityRulesDisabled(async ctx => setDoc(doc(ctx.firestore(), path), {
+        week_start: '2026-09-07', assigned_to: 'user-student', submitted: false,
+        cleaning: {}, supplies: {}, status: 'pending'
+    }));
+    const ref = doc(authDb('user'), path);
+    for (const patch of [
+        { cleaning: 'completed' }, { cleaning: { sweep: 'true' } },
+        { cleaning: { extra: true } }, { supplies: { acetone: 'anything' } },
+        { supplies: { extra: 'ordered' } }, { supplies: [] },
+        { note: 'x'.repeat(1001) }, { assigned_to: 'new-student' }
+    ]) await assertFails(updateDoc(ref, patch));
+    await assertFails(updateDoc(doc(authDb('outsider'), path), { cleaning: { sweep: true } }));
+    await assertSucceeds(updateDoc(ref, { cleaning: { sweep: true }, supplies: { acetone: false } }));
+    await assertSucceeds(updateDoc(ref, { supplies: { acetone: 'needs_order' }, note: '暫存' }));
+});
+
+test('值日順延必須有相符的新週，已順延的舊清單不能再編輯或提交', async () => {
+    const week = '2026-09-07';
+    const nextWeek = '2026-09-14';
+    const user = authDb('user');
+    const ref = doc(user, 'duty_records', week);
+    await env.withSecurityRulesDisabled(async ctx => setDoc(doc(ctx.firestore(), 'duty_records', week), {
+        week_start: week, assigned_to: 'user-student', submitted: false,
+        cleaning: {}, supplies: {}, status: 'pending'
+    }));
+    const carry = { status: 'carried_over', carried_over_to: nextWeek };
+    await assertFails(updateDoc(ref, carry));
+    const successor = {
+        week_start: nextWeek, assigned_to: 'user-student', scheduled_to: 'user-student',
+        assignment_source: 'carryover', carried_from: week, status: 'pending', submitted: false,
+        cleaning: {}, supplies: {}, note: '', created_by_uid: 'user', created_by_student_id: 'user-student'
+    };
+    const wrong = writeBatch(user);
+    wrong.set(doc(user, 'duty_records', nextWeek), { ...successor, carried_from: '2026-08-31' });
+    wrong.update(ref, carry);
+    await assertFails(wrong.commit());
+    const batch = writeBatch(user);
+    batch.set(doc(user, 'duty_records', nextWeek), successor);
+    batch.update(ref, carry);
+    await assertSucceeds(batch.commit());
+    await assertFails(updateDoc(ref, { cleaning: { sweep: true } }));
+    await assertFails(updateDoc(ref, { submitted: true, status: 'submitted', submitted_at: 'now' }));
+    await assertSucceeds(updateDoc(doc(user, 'duty_records', nextWeek), { cleaning: { sweep: true } }));
 });
 
 test('實際匯入保留自訂位置、原子備份，重試不覆寫原始備份', async () => {

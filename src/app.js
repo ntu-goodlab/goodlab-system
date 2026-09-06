@@ -56,7 +56,7 @@ const app = {
     guestGuardHtml: `<tr><td colspan="10" style="text-align:center; padding: 50px 20px; background: #f8fafc;">
         <i class="ph-fill ph-lock-key" style="font-size: 3.5rem; color: #cbd5e1; margin-bottom: 15px; display: block;"></i>
         <div style="font-weight: 700; font-size: 1.2rem; color: var(--text-main);">權限不足，資料已鎖定</div>
-        <div style="font-size: 0.95rem; color: var(--text-muted); margin-top: 6px;">請點擊右上角「Google 登入」並完成學號綁定，以解鎖實驗室資料。</div>
+        <div style="font-size: 0.95rem; color: var(--text-muted); margin-top: 6px;">請點擊右上角「Google 登入」。首次使用請聯絡管理員核對帳號。</div>
     </td></tr>`,
 
     // --- 頁面說明文案 ---
@@ -65,7 +65,7 @@ const app = {
             <h3 style="color: var(--primary); border-bottom: 2px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px;">實驗室成員與權限控制</h3>
             <p style="margin-bottom: 10px;">本模組負責管理實驗室成員資料、帳號綁定與系統操作權限。</p>
             <ul style="margin-top: 10px; padding-left: 20px; line-height: 1.6;">
-                <li><strong>帳號綁定流程：</strong>新生需先由 Admin 於此處建立「學號」。新生可使用自己的任一 Google 帳號登入，輸入尚未被認領的學號即可完成綁定；學校通知信箱與 Google 登入信箱會分開保存。</li>
+                <li><strong>帳號綁定流程：</strong>目前暫停以學號自行開通。新成員請提供學號及登入用 Google 信箱給管理員核對；既有已綁定帳號仍可正常登入。學校通知信箱與 Google 登入信箱分開保存。</li>
                 <li><strong>學號異動：</strong>逕博或重新入學時，請從成員編輯頁使用「變更學號」，系統會先預覽並一次轉移相關資料。</li>
                 <li><strong>權限層級說明：</strong>
                     <ul>

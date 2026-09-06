@@ -116,6 +116,7 @@ export const dutyModule = {
     _canEditDutyRecord: function(record) {
         if (!record || record.submitted || !this.currentUser) return false;
         if (this.currentRole === 'Admin') return true;
+        if ((record.status || 'pending') !== 'pending') return false;
         return Boolean(this.currentMember?.Student_ID && this.currentMember.Student_ID === record.assigned_to);
     },
 

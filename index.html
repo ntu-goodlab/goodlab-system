@@ -791,25 +791,21 @@
     <div id="bind-modal" class="modal hidden" style="backdrop-filter: blur(10px); background-color: rgba(15, 23, 42, 0.9);">
         <div class="modal-content" style="max-width: 400px; border-top: 4px solid var(--primary);">
             <div class="modal-header">
-                <h3 style="color: var(--primary);"><i class="ph-fill ph-lock-key"></i> 連結你的成員資料</h3>
+                <h3 style="color: var(--primary);"><i class="ph-fill ph-lock-key"></i> 帳號尚未開通</h3>
             </div>
             <div class="modal-body">
                 <p style="margin-bottom: 15px; color: var(--text-muted); font-size: 0.95rem; line-height: 1.6;">
-                    嗨！偵測到您已登入 Google 帳號，但尚未與實驗室人員資料綁定。<br>
-                    請輸入您的 <strong>學號</strong> 進行開通：
+                    這個 Google 帳號尚未連結成員資料。<br>
+                    請將你的學號與下方 Google 信箱提供給管理員核對。
                 </p>
                 <div class="bind-account" aria-label="目前登入帳號">
                     <i class="ph ph-google-logo" aria-hidden="true"></i>
                     <span><small>目前登入帳號</small><strong id="bind-account-email">讀取中…</strong></span>
                 </div>
-                <div class="form-group">
-                    <label>學號 (Student ID)</label>
-                    <input type="text" id="Bind_Input_ID" placeholder="例如：R12943xxx" autocomplete="username" autocapitalize="characters" style="text-transform: uppercase;">
-                </div>
+                <p class="form-help">目前暫停以學號自行開通。若你曾經綁定，請登出後改用原先的 Google 帳號登入。</p>
             </div>
             <div class="modal-footer" style="justify-content: space-between;">
-                <button onclick="app.cancelBinding()" class="btn btn-secondary">取消並登出</button>
-                <button onclick="app.submitBinding()" class="btn btn-primary" id="btn-submit-bind">確認綁定</button>
+                <button onclick="app.cancelBinding()" class="btn btn-secondary">登出並更換帳號</button>
             </div>
         </div>
     </div>

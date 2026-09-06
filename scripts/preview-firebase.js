@@ -2,7 +2,8 @@
 import { getDutyWeekId } from '../src/duty-schedule.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS } from '../src/constants.js';
 const isAdmin = new URLSearchParams(location.search).get('role') === 'admin';
-const uid = isAdmin ? 'preview-admin' : 'preview-user';
+const isUnbound = new URLSearchParams(location.search).get('role') === 'guest';
+const uid = isUnbound ? 'preview-unbound' : isAdmin ? 'preview-admin' : 'preview-user';
 const user = { uid, displayName: '預覽成員', email: `${uid}@example.test` };
 const members = [
     { Student_ID: 'preview-a', Name_Ch: '林同學', Role: 'User', Status: 'Active', Degree: 'Master',

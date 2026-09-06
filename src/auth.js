@@ -6,7 +6,6 @@ import { auth, provider, db, doc, onSnapshot, updateDoc, signInWithPopup, onAuth
 import { showNotification, closeModal } from './ui.js';
 import { escapeHtml } from './utils.js';
 import { getMobileNavigationLayout } from './mobile-navigation.js';
-import { normalizeStudentId } from './member-id-migration.js';
 
 export const authModule = {
 
@@ -200,67 +199,9 @@ export const authModule = {
         });
     },
 
-    // === 自訂綁定視窗邏輯：送出綁定 ===
+    // Compatibility entry point for an older open page: never attempt an unsafe UID claim.
     submitBinding: async function() {
-        const studentId = normalizeStudentId(document.getElementById('Bind_Input_ID').value);
-        if (!studentId) {
-            this.showNotification("請輸入學號！", "warning");
-            return;
-        }
-
-        // 從資料庫找這個學號
-        const member = this.data.members.find(m => normalizeStudentId(m?.Student_ID) === studentId);
-
-        if (!member) {
-            this.showNotification("找不到此學號。請 Admin 確認成員資料內的 Student_ID 欄位與輸入學號一致，再重新整理後綁定。", "error", 8000);
-            return;
-        }
-
-        if ((member.Role || 'User') !== 'User') {
-            this.showNotification('此資料預設為管理員，不能自行認領。請既有管理員先改為一般成員，待你完成綁定並核對帳號後再授權。', 'warning', 10000);
-            return;
-        }
-
-        // ★ 安全檢查：此學號是否已被別的 Google 帳號綁走了？
-        if (member.Google_UID && member.Google_UID !== this.currentUser.uid) {
-            this.showNotification("綁定失敗：此學號已被其他 Google 帳戶使用。", "error");
-            return;
-        }
-
-        const loginEmail = String(this.currentUser?.email || '').trim().toLowerCase();
-        const loginDisplayName = String(this.currentUser?.displayName || '').trim();
-        if (!loginEmail) {
-            this.showNotification("目前 Google 帳號沒有可記錄的信箱，請改用一般 Google 帳號登入。", "error");
-            return;
-        }
-
-        try {
-            const btn = document.getElementById('btn-submit-bind');
-            btn.innerText = "綁定中...";
-            btn.disabled = true;
-
-            // 先寫入 UID 完成認領，維持與既有 Firestore Rules 相容。
-            const memberRef = doc(db, "members", member.Student_ID);
-            await updateDoc(memberRef, { Google_UID: this.currentUser.uid });
-            try {
-                const googleIdentity = { Google_Email: loginEmail };
-                if (loginDisplayName) googleIdentity.Google_Display_Name = loginDisplayName;
-                await updateDoc(memberRef, googleIdentity);
-            } catch (identityError) {
-                console.warn('[GOODLAB] 綁定已完成，但 Google 帳號資料將在新規則發布後補登：', identityError.code || identityError.message);
-            }
-
-            this.showNotification("綁定成功！權限已解鎖。", "success");
-            closeModal('bind-modal');
-            
-            // 重新整理身分與 UI
-            this.checkUserRole(); 
-        } catch (e) {
-            this.showNotification("寫入失敗: " + e.message, "error");
-        } finally {
-            document.getElementById('btn-submit-bind').disabled = false;
-            document.getElementById('btn-submit-bind').innerText = "確認綁定";
-        }
+        this.showNotification('目前暫停以學號自行開通，請聯絡管理員核對帳號。', 'info', 8000);
     },
 
     // === 側邊欄與手機 UI 動態控制 ===
@@ -321,8 +262,8 @@ export const authModule = {
 
         const loginGuide = `<section class="help-current-page">
             <h4>第一次登入與帳號綁定</h4>
-            <ol><li>點右上角「Google 登入」。</li><li>選擇自己要用來登入 GOODLAB 的 Google 帳號。</li><li>輸入 Admin 已建立、且尚未被認領的學號並確認綁定。</li></ol>
-            <p>Google 登入信箱與學校通知信箱是兩筆不同資料。若學號不在名單或已被綁定，請聯絡 Admin。</p>
+            <ol><li>點右上角「Google 登入」。</li><li>選擇自己要用來登入 GOODLAB 的 Google 帳號。</li><li>若帳號尚未開通，請將學號及目前登入的 Google 信箱提供給管理員核對。</li></ol>
+            <p>Google 登入信箱與學校通知信箱是兩筆不同資料。目前暫停以學號自行綁定；既有已綁定帳號仍可正常登入。</p>
         </section>`;
         const commonQuestions = `<section class="help-section">
             <h4>常見問題</h4>

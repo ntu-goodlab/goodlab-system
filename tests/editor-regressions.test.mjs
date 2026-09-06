@@ -16,6 +16,26 @@ function loadModule(file, name, context) {
     return context[name];
 }
 
+test('舊頁面的自助綁定入口不再嘗試寫入 UID', async () => {
+    const notifications = [];
+    const app = loadModule('auth.js', 'authModule', {
+        updateDoc() { throw new Error('不應寫入'); }
+    });
+    app.showNotification = message => notifications.push(message);
+    await app.submitBinding();
+    assert.match(notifications[0], /暫停.*管理員/);
+});
+
+test('已順延的值日清單不再讓成員編輯，下一週待辦仍可使用', () => {
+    const app = loadModule('duty.js', 'dutyModule', {});
+    Object.assign(app, { currentUser: { uid: 'user' }, currentRole: 'User', currentMember: { Student_ID: 'student' } });
+    const record = { assigned_to: 'student', submitted: false };
+    assert.equal(app._canEditDutyRecord(record), true);
+    assert.equal(app._canEditDutyRecord({ ...record, status: 'pending' }), true);
+    assert.equal(app._canEditDutyRecord({ ...record, status: 'carried_over' }), false);
+    assert.equal(app._canEditDutyRecord({ ...record, submitted: true }), false);
+});
+
 test('編輯帳務使用欄位更新，新增才寫入建立時間', async () => {
     const values = { Acc_Amount: '120', Acc_Type: 'Lab', Fund_Source: 'Bank', Payback_Method: 'Bank',
         Acc_Payer: 'Fund', Txn_ID: 'existing', Acc_Description: '耗材', Acc_Date: '2026-09-06' };
