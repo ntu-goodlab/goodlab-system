@@ -2,15 +2,40 @@
  * GOODLAB — 認證與權限模組
  * Phase 4：處理 Google 登入/登出、學號綁定、角色檢查與側邊欄 UI 控制。
  */
-import { auth, provider, db, doc, updateDoc, signInWithPopup, onAuthStateChanged, signOut } from './firebase.js';
+import { auth, provider, db, doc, onSnapshot, updateDoc, signInWithPopup, onAuthStateChanged, signOut } from './firebase.js';
 import { showNotification, closeModal } from './ui.js';
 import { escapeHtml } from './utils.js';
 import { getMobileNavigationLayout } from './mobile-navigation.js';
-import { normalizeStudentId } from './member-id-migration.js';
 
 export const authModule = {
 
     _googleIdentitySyncUid: null,
+    _adminRegistryUnsubscribe: null,
+    _adminRegistry: null,
+    _adminRegistryLoaded: false,
+    _adminAccessWarning: null,
+
+    // Authentication only reads authorization; it must never grant it.
+    watchOwnAdminRegistry: function(uid) {
+        this._adminRegistryUnsubscribe?.();
+        this._adminRegistryUnsubscribe = null;
+        this._adminRegistry = null;
+        this._adminRegistryLoaded = false;
+        this._adminAccessWarning = null;
+        if (!uid) return;
+        this._adminRegistryUnsubscribe = onSnapshot(doc(db, 'admins', uid), snapshot => {
+            if (this.currentUser?.uid !== uid) return;
+            this._adminRegistry = snapshot.exists() ? snapshot.data() : null;
+            this._adminRegistryLoaded = true;
+            this.checkUserRole();
+        }, error => {
+            if (this.currentUser?.uid !== uid) return;
+            this._adminRegistry = null;
+            this._adminRegistryLoaded = true;
+            console.warn('[GOODLAB] 無法確認管理授權：', error.code || error.message);
+            this.checkUserRole();
+        });
+    },
 
     // === 登入 ===
     login: async function() {
@@ -23,6 +48,7 @@ export const authModule = {
 
     // === 登出 ===
     logout: async function() {
+        if (!this.confirmEmploymentLeave()) return;
         try {
             await signOut(auth);
         } catch (error) {
@@ -34,10 +60,30 @@ export const authModule = {
     setupAuthListener: function() {
         onAuthStateChanged(auth, (user) => {
             const previousUid = this.currentUser ? this.currentUser.uid : null;
-            if (!user || previousUid !== user.uid) this._googleIdentitySyncUid = null;
+            if (!user || previousUid !== user.uid) {
+                this.resetEmploymentEditors();
+                this._employmentSaveToken = null;
+                this._googleIdentitySyncUid = null;
+                this.syncRealtimeListeners('Anonymous');
+                this.overviewEditorOpen = false;
+                this.overviewMeetingEditorOpen = false;
+                this.overviewNoticeEditId = null;
+                this.employmentPersonEditorOpen = false;
+                this.employmentPersonDrafts = [];
+                this.projectEditorOpen = false;
+                this.empMonthEditor = null;
+                for (const id of ['bulletin-editor-modal', 'log-details-modal', 'routine-edit-modal']) {
+                    document.getElementById(id)?.remove();
+                }
+                for (const id of ['overview-content', 'duty-content', 'employment-content']) {
+                    const region = document.getElementById(id);
+                    if (region) region.innerHTML = '';
+                }
+            }
             this.currentUser = user;
             this.currentMember = null;
             this.currentRole = 'Guest';
+            if (!user || previousUid !== user.uid) this.watchOwnAdminRegistry(user?.uid);
 
             if (user) {
                 if (previousUid !== user.uid) this.membersLoaded = false;
@@ -53,7 +99,7 @@ export const authModule = {
     },
 
     // === 權限中控室 (解決非同步時間差) ===
-    checkUserRole: function() {
+    checkUserRole: async function() {
         const userInfo = document.getElementById('user-info');
         const btnLogin = document.getElementById('btn-login');
         const btnLogout = document.getElementById('btn-logout');
@@ -86,11 +132,25 @@ export const authModule = {
 
         if (memberData) {
             // 已綁定成功 (User / Admin)
-            this.currentRole = memberData.Role || 'User';
+            const adminAuthorized = memberData.Role === 'Admin'
+                && this._adminRegistryLoaded
+                && this._adminRegistry?.student_id === memberData.Student_ID;
+            this.currentRole = adminAuthorized ? 'Admin' : 'User';
             this.currentMember = memberData; // Phase 5: 儲存完整 member 資料
             const roleLabel = this.currentRole === 'Admin' ? '管理員' : '成員';
             if(userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${roleLabel}`;
             closeModal('bind-modal');
+
+            if (memberData.Role === 'Admin' && !adminAuthorized) {
+                if (userInfo) userInfo.innerText = `${memberData.Name_Ch} · ${this._adminRegistryLoaded ? '管理權限尚未啟用' : '正在確認管理權限'}`;
+                if (this._adminRegistryLoaded && this._adminAccessWarning !== memberData.Student_ID) {
+                    this._adminAccessWarning = memberData.Student_ID;
+                    this.showNotification('管理權限尚未啟用。請既有管理員核對你的 Google 綁定帳號，再重新儲存成員的 Admin 權限。', 'warning', 10000);
+                }
+            } else {
+                this._adminAccessWarning = null;
+            }
+
             this.syncRealtimeListeners(this.currentRole);
             const googleEmail = String(this.currentUser.email || '').trim().toLowerCase();
             const googleDisplayName = String(this.currentUser.displayName || '').trim();
@@ -139,62 +199,9 @@ export const authModule = {
         });
     },
 
-    // === 自訂綁定視窗邏輯：送出綁定 ===
+    // Compatibility entry point for an older open page: never attempt an unsafe UID claim.
     submitBinding: async function() {
-        const studentId = normalizeStudentId(document.getElementById('Bind_Input_ID').value);
-        if (!studentId) {
-            this.showNotification("請輸入學號！", "warning");
-            return;
-        }
-
-        // 從資料庫找這個學號
-        const member = this.data.members.find(m => normalizeStudentId(m?.Student_ID) === studentId);
-
-        if (!member) {
-            this.showNotification("找不到此學號。請 Admin 確認成員資料內的 Student_ID 欄位與輸入學號一致，再重新整理後綁定。", "error", 8000);
-            return;
-        }
-
-        // ★ 安全檢查：此學號是否已被別的 Google 帳號綁走了？
-        if (member.Google_UID && member.Google_UID !== this.currentUser.uid) {
-            this.showNotification("綁定失敗：此學號已被其他 Google 帳戶使用。", "error");
-            return;
-        }
-
-        const loginEmail = String(this.currentUser?.email || '').trim().toLowerCase();
-        const loginDisplayName = String(this.currentUser?.displayName || '').trim();
-        if (!loginEmail) {
-            this.showNotification("目前 Google 帳號沒有可記錄的信箱，請改用一般 Google 帳號登入。", "error");
-            return;
-        }
-
-        try {
-            const btn = document.getElementById('btn-submit-bind');
-            btn.innerText = "綁定中...";
-            btn.disabled = true;
-
-            // 先寫入 UID 完成認領，維持與既有 Firestore Rules 相容。
-            const memberRef = doc(db, "members", member.Student_ID);
-            await updateDoc(memberRef, { Google_UID: this.currentUser.uid });
-            try {
-                const googleIdentity = { Google_Email: loginEmail };
-                if (loginDisplayName) googleIdentity.Google_Display_Name = loginDisplayName;
-                await updateDoc(memberRef, googleIdentity);
-            } catch (identityError) {
-                console.warn('[GOODLAB] 綁定已完成，但 Google 帳號資料將在新規則發布後補登：', identityError.code || identityError.message);
-            }
-
-            this.showNotification("綁定成功！權限已解鎖。", "success");
-            closeModal('bind-modal');
-            
-            // 重新整理身分與 UI
-            this.checkUserRole(); 
-        } catch (e) {
-            this.showNotification("寫入失敗: " + e.message, "error");
-        } finally {
-            document.getElementById('btn-submit-bind').disabled = false;
-            document.getElementById('btn-submit-bind').innerText = "確認綁定";
-        }
+        this.showNotification('目前暫停以學號自行開通，請聯絡管理員核對帳號。', 'info', 8000);
     },
 
     // === 側邊欄與手機 UI 動態控制 ===
@@ -255,8 +262,8 @@ export const authModule = {
 
         const loginGuide = `<section class="help-current-page">
             <h4>第一次登入與帳號綁定</h4>
-            <ol><li>點右上角「Google 登入」。</li><li>選擇自己要用來登入 GOODLAB 的 Google 帳號。</li><li>輸入 Admin 已建立、且尚未被認領的學號並確認綁定。</li></ol>
-            <p>Google 登入信箱與學校通知信箱是兩筆不同資料。若學號不在名單或已被綁定，請聯絡 Admin。</p>
+            <ol><li>點右上角「Google 登入」。</li><li>選擇自己要用來登入 GOODLAB 的 Google 帳號。</li><li>若帳號尚未開通，請將學號及目前登入的 Google 信箱提供給管理員核對。</li></ol>
+            <p>Google 登入信箱與學校通知信箱是兩筆不同資料。目前暫停以學號自行綁定；既有已綁定帳號仍可正常登入。</p>
         </section>`;
         const commonQuestions = `<section class="help-section">
             <h4>常見問題</h4>
@@ -265,7 +272,7 @@ export const authModule = {
 
         if (this.currentRole === 'User') {
             const pageContent = this.userHelpDocs?.[tabName] || '<p>本頁目前沒有額外操作說明。</p>';
-            const pageNames = { overview: '實驗室總覽', duty: '值日生工作', 'duty-history': '值日生執行紀錄', inventory: '產編清點', instruments: '儀器設備', members: '實驗室成員' };
+            const pageNames = { overview: '實驗室總覽', duty: '值日生工作', 'duty-history': '值日生執行紀錄', inventory: '財產清冊', instruments: '儀器設備', members: '實驗室成員' };
             if (title) title.textContent = 'GOODLAB 使用說明';
             body.innerHTML = `<section class="help-current-page"><span class="help-eyebrow">目前頁面</span><h4>${escapeHtml(pageNames[tabName] || 'GOODLAB')}</h4>${pageContent}</section>${commonQuestions}`;
         } else if (this.currentRole === 'Admin') {

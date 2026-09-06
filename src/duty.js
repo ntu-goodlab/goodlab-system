@@ -9,6 +9,7 @@
  *                            submitted: false, submitted_at: null }
  */
 import { db, doc, setDoc, updateDoc, runTransaction } from './firebase.js';
+import { captureFormDrafts, restoreFormDrafts } from './form-draft.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
 import { canAutoCarryOver, canInitializeDutyWeek, getDutyRoster, getDutyWeekId, hasDutyProgress } from './duty-schedule.js';
 import {
@@ -115,6 +116,7 @@ export const dutyModule = {
     _canEditDutyRecord: function(record) {
         if (!record || record.submitted || !this.currentUser) return false;
         if (this.currentRole === 'Admin') return true;
+        if ((record.status || 'pending') !== 'pending') return false;
         return Boolean(this.currentMember?.Student_ID && this.currentMember.Student_ID === record.assigned_to);
     },
 
@@ -336,6 +338,9 @@ export const dutyModule = {
     renderDuty: function() {
         const container = document.getElementById('duty-content');
         if (!container) return;
+        const previousNote = container.querySelector('#duty-note');
+        const drafts = previousNote && previousNote.value !== previousNote.defaultValue
+            ? captureFormDrafts(container) : [];
 
         if (this.currentRole === 'Guest') {
             container.innerHTML = `<div style="text-align:center; padding:50px; color:var(--text-muted);">
@@ -532,7 +537,7 @@ export const dutyModule = {
         }).join('');
 
         const noteValue = String(record?.note || '').slice(0, DUTY_NOTE_MAX_LENGTH);
-        const noteEditorHtml = `<div class="duty-card duty-note-card">
+        const noteEditorHtml = `<div class="duty-card duty-note-card" data-draft-key="duty-note-${weekId}">
             <div class="duty-card-header">
                 <h3><i class="ph ph-note-pencil" aria-hidden="true"></i> 本週留言</h3>
             </div>
@@ -557,9 +562,15 @@ export const dutyModule = {
         // 提交按鈕
         let submitBtnHtml = '';
         if (canEdit && !submitted) {
-            submitBtnHtml = `<button class="btn btn-primary" id="btn-submit-duty" onclick="app.submitDuty()" style="width:100%; padding:14px; font-size:1.05rem; margin-top:12px;">
-                <i class="ph ph-check-circle"></i> 提交本週值日生工作
-            </button>`;
+            const missing = [
+                ...DUTY_CLEANING_TASKS.filter(item => !record?.cleaning?.[item.id]).map(item => item.name),
+                ...DUTY_SUPPLY_ITEMS.filter(item => !isDutySupplyReadyForSubmit(record?.supplies?.[item.id])).map(item => item.name)
+            ];
+            submitBtnHtml = `<section class="duty-completion" aria-label="提交本週工作"><div><strong>${missing.length ? '完成清單後再提交' : '本週工作已備妥'}</strong><p id="duty-submit-summary" class="duty-submit-summary" role="status">${missing.length
+                ? `還有 ${missing.length} 項待完成：${missing.map(escapeDutyHtml).join('、')}`
+                : '提交後會封存本週紀錄。'}</p></div><button type="button" class="btn btn-primary" id="btn-submit-duty" onclick="app.submitDuty()" aria-describedby="duty-submit-summary" ${missing.length ? 'disabled' : ''}>
+                <i class="ph ph-check-circle" aria-hidden="true"></i> 提交本週工作
+            </button></section>`;
         } else if (submitted) {
             submitBtnHtml = `<div style="text-align:center; padding:16px; background:#ecfdf5; border-radius:10px; margin-top:12px; color:var(--success); font-weight:600;">
                 <i class="ph ph-check-circle"></i> 本週值日生工作已完成提交
@@ -619,21 +630,29 @@ export const dutyModule = {
             ${readonlyNoteHtml}
             `}
 
-            <div class="duty-card" style="background:#f8fafc;">
-                <div class="duty-card-header"><h3><i class="ph ph-info" aria-hidden="true"></i> 補充說明</h3></div>
+            <section class="duty-reference" aria-labelledby="duty-reference-title">
+                <h3 id="duty-reference-title">補充說明</h3>
+                <dl class="duty-reference-list">
                 ${DUTY_NOTES.map(note => `
                     <div class="duty-note-item">
-                        <div class="duty-note-title"><i class="ph ${escapeDutyHtml(note.icon || 'ph-info')}" aria-hidden="true"></i>${escapeDutyHtml(note.title)}</div>
-                        <div style="font-size:0.9rem; color:var(--text-muted); line-height:1.6;">${note.content}</div>
+                        <dt>${escapeDutyHtml(note.title)}</dt>
+                        <dd>${note.content}
                         ${note.link ? `<a class="duty-resource-link" href="${escapeDutyHtml(note.link.url)}" target="_blank" rel="noopener noreferrer">
-                            <i class="ph ph-table" aria-hidden="true"></i>${escapeDutyHtml(note.link.label)}
+                            ${escapeDutyHtml(note.link.label)}
                             <i class="ph ph-arrow-square-out" aria-hidden="true"></i>
                         </a>` : ''}
+                        </dd>
                     </div>
                 `).join('')}
-            </div>
+                </dl>
+            </section>
         `;
 
+        restoreFormDrafts(container, drafts);
+        const restoredNote = container.querySelector('#duty-note');
+        if (restoredNote && !restoredNote.disabled && restoredNote.value !== noteValue) {
+            this.updateDutyNoteCount(restoredNote.value);
+        }
         // 自動建立紀錄
         if (!record && assignedTo && (isAdmin || isCurrentDuty)) {
             this._ensureWeekRecord(assignedTo).catch(error => {
@@ -837,14 +856,22 @@ export const dutyModule = {
         const note = String(value || '').slice(0, DUTY_NOTE_MAX_LENGTH);
         const status = document.getElementById('duty-note-status');
         if (status) status.textContent = '儲存中…';
+        const actorUid = this.currentUser?.uid;
+        const showResult = message => {
+            const field = document.querySelector(`[data-draft-key="duty-note-${weekId}"] #duty-note`);
+            if (this.currentUser?.uid === actorUid && field?.value === note) {
+                const currentStatus = document.getElementById('duty-note-status');
+                if (currentStatus) currentStatus.textContent = message;
+            }
+        };
         try {
             await updateDoc(doc(db, 'duty_records', weekId), {
                 note,
                 updated_at: new Date().toISOString()
             });
-            if (status) status.textContent = '已儲存';
+            showResult('已儲存');
         } catch (error) {
-            if (status) status.textContent = '儲存失敗，請再試一次';
+            showResult('儲存失敗，草稿已保留；可再次編輯或提交時重試');
             this.showNotification('留言儲存失敗：' + error.message, 'error');
         }
     },
@@ -891,7 +918,7 @@ export const dutyModule = {
         if (!confirm('確定提交本週值日生工作？提交後將無法修改。')) return;
 
         const button = document.getElementById('btn-submit-duty');
-        const note = String(document.getElementById('duty-note')?.value || record.note || '')
+        const note = String(document.getElementById('duty-note')?.value ?? record.note ?? '')
             .trim()
             .slice(0, DUTY_NOTE_MAX_LENGTH);
         const scheduledTo = this._getScheduledDutyId(record);

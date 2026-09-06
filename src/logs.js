@@ -46,7 +46,7 @@ export const logsModule = {
         if (!tbody) return;
 
         // ★ 加入防火牆攔截：User 與 Guest 都不能看維修紀錄
-        if (this.currentRole !== 'Admin') {
+        if (!['Admin', 'User'].includes(this.currentRole)) {
             tbody.innerHTML = this.guestGuardHtml;
             return;
         }
@@ -102,7 +102,7 @@ export const logsModule = {
                         return `<span style="color: ${color}; ${cursor}" 
                                       onclick="event.stopPropagation(); ${isAdmin ? `app.quickResolve('${row.Log_ID}')` : ''}" 
                                       title="${isAdmin ? '點擊切換狀態 (' + titleText + ')' : titleText}">
-                                    <i class="ph-fill ph-circle" style="font-size:1.2rem;"></i>
+                                    <i class="ph-fill ph-circle" aria-hidden="true"></i> ${titleText}
                                 </span>`;
                     }
                 },
@@ -120,7 +120,7 @@ export const logsModule = {
                 { className: 'hide-mobile', render: row => escapeHtml(row.Problem_Desc) },
                 { className: 'hide-mobile', render: row => `<span style="color:var(--success);">${escapeHtml(row.Solution || '-')}</span>` },
                 { width: '100px', className: 'hide-mobile', render: row => escapeHtml(this.getMemberName(row.Owner_ID || row.Reporter_ID || row.Reporter)) },
-                { width: '80px', align: 'center', render: row => `<button onclick="event.stopPropagation(); app.openLogModal('${row.Log_ID}')" class="btn btn-sm btn-secondary" ${isAdmin?'':'disabled'}><i class="ph ph-pencil-simple"></i></button>` }
+                { width: '80px', align: 'center', render: row => `<button type="button" onclick="event.stopPropagation(); app.openLogModal('${escapeHtml(row.Log_ID)}')" class="btn btn-sm btn-secondary" aria-label="${isAdmin ? '編輯' : '查看'}維修紀錄：${escapeHtml(row.Problem_Desc)}">${isAdmin ? '編輯' : '查看'}</button>` }
             ],
             emptyMessage: "目前沒有任何符合的維修紀錄"
         });
@@ -135,6 +135,7 @@ export const logsModule = {
 
     // === 快速結案 ===
     quickResolve: function(id) {
+        if (this.currentRole !== 'Admin') return;
         this.openLogModal(id);
         const statusSelect = document.getElementById('Log_Status');
         if (statusSelect.value === 'Open') {
@@ -149,6 +150,10 @@ export const logsModule = {
         const isAdmin = this.currentRole === 'Admin';
 
         if (!isAdmin) {
+            if (this.currentRole === 'User' && typeof inputData === 'string') {
+                this.openLogDetails(inputData);
+                return;
+            }
             this.showNotification('設備問題回報目前僅由 Admin 建立。', 'warning');
             return;
         }
@@ -252,6 +257,28 @@ export const logsModule = {
         if (delBtn) delBtn.style.display = (data && isAdmin) ? 'block' : 'none';
 
         UI.openModal({ modalId, title });
+    },
+
+    openLogDetails: function(id) {
+        if (!['Admin', 'User'].includes(this.currentRole)) return;
+        const record = this.data.logs.find(item => item.Log_ID === id || item.id === id);
+        if (!record) return;
+        const instrument = this.data.instruments.find(item => item.Instrument_ID === record.Instrument_ID);
+        document.getElementById('log-details-modal')?.remove();
+        const modal = document.createElement('div');
+        modal.id = 'log-details-modal';
+        modal.className = 'modal';
+        const rows = [
+            ['儀器', instrument?.Name || record.Instrument_ID || '未指定'],
+            ['狀態', record.Status === 'Closed' ? '已結案' : '待處理'],
+            ['回報日期', record.Date_Reported || '未填寫'],
+            ['問題描述', record.Problem_Desc || '未填寫'],
+            ['處理方式', record.Solution || '尚未填寫處理方式'],
+            ['負責人', this.getMemberName(record.Owner_ID || record.Reporter_ID || record.Reporter) || '未指定'],
+            ['結案日期', record.Date_Resolved || '尚未結案']
+        ];
+        modal.innerHTML = `<div class="modal-content record-details-dialog"><div class="modal-header"><h3>維修紀錄</h3><button type="button" class="close" aria-label="關閉維修紀錄" onclick="app.closeModal('log-details-modal')">&times;</button></div><div class="modal-body"><p class="form-help">紀錄由管理員維護；如有補充資訊，請聯絡設備負責人。</p><dl class="record-details">${rows.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl></div><div class="modal-footer"><button type="button" class="btn btn-secondary" onclick="app.closeModal('log-details-modal')">關閉</button></div></div>`;
+        document.body.appendChild(modal);
     },
 
     // === 依區域篩選儀器下拉選單 ===

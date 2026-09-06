@@ -68,6 +68,11 @@ test('精確產生各集合的學號轉移操作', () => {
     assert.equal(plan.operations.some(item => item.collection === 'inventory'), false);
 });
 
+test('綁定成員的轉移寫入預算包含管理員登錄更新或清除', () => {
+    assert.equal(createMemberIdMigrationPlan({ members }, 'r10943138', 'f10943138').totalWrites, 3);
+    assert.equal(createMemberIdMigrationPlan({ members }, 'f10800001', 'd10800001').totalWrites, 2);
+});
+
 test('聘僱再次轉移時不覆蓋最初申報學號', () => {
     const plan = createMemberIdMigrationPlan({
         employments: [{

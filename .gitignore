@@ -3,3 +3,5 @@ dist/
 .env
 .env.local
 design-previews/
+.local-tools/
+*-debug.log

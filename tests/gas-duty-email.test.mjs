@@ -46,6 +46,19 @@ function createGasContext() {
     return context;
 }
 
+test('上週已完成但無本週文件時，提醒仍能推算下一位', () => {
+    const context = createGasContext();
+    const result = vm.runInContext(`resolveDutyRecordForWeek_(
+        [{_id:'2026-08-31', week_start:'2026-08-31', scheduled_to:'test-a', assigned_to:'test-a', submitted:true}],
+        '2026-09-07', [
+            {Student_ID:'test-a', Degree:'Master', Role:'User', Status:'Active', Enrollment_Date:'2024-09-01'},
+            {Student_ID:'test-b', Degree:'Master', Role:'User', Status:'Active', Enrollment_Date:'2025-09-01'}
+        ])`, context);
+    assert.equal(result.assigned_to, 'test-b');
+    assert.equal(result.week_start, '2026-09-07');
+    assert.equal(result.submitted, false);
+});
+
 test('值日完成信顯示本週與下週區間、叫貨狀況及執行紀錄連結', () => {
     const context = createGasContext();
     const expression = `buildDutyCompletionMessage_(

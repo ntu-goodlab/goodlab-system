@@ -67,7 +67,6 @@ function sortRoutineItems(a, b) {
 }
 
 export const routineModule = {
-    routineView: 'overview',
     routineFilter: 'all',
 
     getUpcomingRoutines: function(limit = 5) {
@@ -114,8 +113,7 @@ export const routineModule = {
             return;
         }
 
-        if (this.routineView === 'edit') this._renderRoutineEdit(container);
-        else this._renderRoutineOverview(container);
+        this._renderRoutineOverview(container);
     },
 
     _renderRoutineOverview: function(container) {
@@ -168,20 +166,22 @@ export const routineModule = {
                 <td class="routine-item-cell">
                     <span class="routine-category-label ${routineCategoryClass(category)}">${escapeHtml(category)}</span>
                     <span class="routine-overview-item-name">${nameHtml}</span>
+                    <small class="routine-visibility">${routine.visible_to_users ? '成員可見' : '僅管理員'}</small>
                     ${routine.notes ? `<div class="routine-notes">${this._linkifyText(escapeHtml(routine.notes))}</div>` : ''}
                 </td>
                 <td class="routine-cycle-cell">${this.getRoutineIntervalLabel(routine)}</td>
                 <td class="date-cell">${routine.last_done || '-'}</td>
                 <td class="date-cell">${routine.next_due || '-'}</td>
                 <td class="routine-status-cell"><span class="${statusClass}"><i class="ph ${statusIcon}" aria-hidden="true"></i> ${statusText}</span></td>
+                <td><button type="button" class="btn btn-secondary btn-sm" aria-label="編輯 ${safeName}" onclick="app.openRoutineEditModal('${escapeHtml(routine._id)}')">編輯</button></td>
             </tr>`;
         }).join('');
 
         container.innerHTML = `
             <div class="section-toolbar">
                 <h2>實驗室行事</h2>
-                <button class="btn btn-primary btn-sm" onclick="app.routineView='edit'; app.renderRoutine();">
-                    <i class="ph ph-pencil-simple" aria-hidden="true"></i> 編輯行事
+                <button type="button" class="btn btn-primary btn-sm" onclick="app.openRoutineEditModal()">
+                    <i class="ph ph-plus" aria-hidden="true"></i> 新增行事
                 </button>
             </div>
             ${this._renderRoutineFilters()}
@@ -193,6 +193,7 @@ export const routineModule = {
                         <col class="routine-col-date">
                         <col class="routine-col-date">
                         <col class="routine-col-status">
+                        <col class="routine-col-actions">
                     </colgroup>
                     <thead><tr>
                         <th class="routine-complete-column">完成</th>
@@ -201,56 +202,10 @@ export const routineModule = {
                         <th>上次完成</th>
                         <th>下次日期</th>
                         <th>狀態</th>
+                        <th>操作</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>` : '<div class="empty-state"><i class="ph ph-calendar-blank" aria-hidden="true"></i>此分類目前沒有行事項目</div>'}`;
-    },
-
-    _renderRoutineEdit: function(container) {
-        const rows = [...this._getFilteredRoutines()]
-            .sort(sortRoutineItems)
-            .map(routine => {
-                const category = normalizeRoutineCategory(routine.category);
-                const completed = isCompletedOneTime(routine);
-                return `<tr${completed ? ' class="routine-row-completed"' : ''}>
-                    <td class="routine-item-cell">
-                        <span class="routine-category-label ${routineCategoryClass(category)}">${escapeHtml(category)}</span>
-                        <span class="routine-edit-item-name">${escapeHtml(routine.name)}</span>
-                    </td>
-                    <td>${routine.visible_to_users ? '<span class="status-badge status-badge-success"><i class="ph ph-eye" aria-hidden="true"></i> 顯示</span>' : '<span class="status-badge"><i class="ph ph-eye-slash" aria-hidden="true"></i> 不顯示</span>'}</td>
-                    <td>${this.getRoutineIntervalLabel(routine)}</td>
-                    <td class="date-cell">${routine.last_done || '-'}</td>
-                    <td class="date-cell">${routine.next_due || (completed ? '已完成' : '-')}</td>
-                    <td class="routine-action-cell">
-                        <div class="table-actions">
-                            <button class="btn btn-sm btn-secondary" aria-label="編輯 ${escapeHtml(routine.name)}" onclick="app.openRoutineEditModal('${routine._id}')"><i class="ph ph-pencil-simple" aria-hidden="true"></i></button>
-                            <button class="btn btn-sm btn-secondary btn-icon-danger" aria-label="刪除 ${escapeHtml(routine.name)}" onclick="app.deleteRoutineItem('${routine._id}')"><i class="ph ph-trash" aria-hidden="true"></i></button>
-                        </div>
-                    </td>
-                </tr>`;
-            }).join('');
-
-        container.innerHTML = `
-            <div class="section-toolbar">
-                <h2>編輯實驗室行事</h2>
-                <div class="toolbar-actions">
-                    <button class="btn btn-secondary btn-sm" onclick="app.routineView='overview'; app.renderRoutine();"><i class="ph ph-arrow-left" aria-hidden="true"></i> 返回行事</button>
-                    <button class="btn btn-primary btn-sm" onclick="app.openRoutineEditModal()"><i class="ph ph-plus" aria-hidden="true"></i> 新增項目</button>
-                </div>
-            </div>
-            ${this._renderRoutineFilters()}
-            <div class="table-container"><table class="routine-table routine-edit-table">
-                <colgroup>
-                    <col class="routine-col-item">
-                    <col class="routine-col-visibility">
-                    <col class="routine-col-cycle">
-                    <col class="routine-col-date">
-                    <col class="routine-col-date">
-                    <col class="routine-col-actions">
-                </colgroup>
-                <thead><tr><th>項目</th><th>成員總覽</th><th>執行方式</th><th>上次完成</th><th>下次日期</th><th>操作</th></tr></thead>
-                <tbody>${rows || '<tr><td colspan="6" class="empty">此分類目前沒有行事項目</td></tr>'}</tbody>
-            </table></div>`;
     },
 
     _linkifyText: function(text) {
@@ -294,6 +249,7 @@ export const routineModule = {
     },
 
     openRoutineEditModal: function(id) {
+        if (this.currentRole !== 'Admin') return;
         const routine = id ? this.data.routines.find(item => item._id === id) : null;
         const interval = getRoutineInterval(routine || {});
         const scheduleType = getRoutineScheduleType(routine || {});
@@ -342,6 +298,7 @@ export const routineModule = {
                     <label class="overview-check"><input type="checkbox" id="routine-visible" ${routine?.visible_to_users ? 'checked' : ''}>顯示於一般成員總覽</label>
                 </div>
                 <div class="modal-footer">
+                    ${routine ? `<button type="button" class="btn btn-secondary btn-icon-danger" onclick="app.deleteRoutineItem('${escapeHtml(id)}')">刪除行事</button>` : ''}
                     <button class="btn btn-secondary" onclick="app.closeModal('routine-edit-modal')">取消</button>
                     <button class="btn btn-primary" id="btn-save-routine" onclick="app.saveRoutineItem()">儲存</button>
                 </div>
@@ -372,6 +329,7 @@ export const routineModule = {
     },
 
     saveRoutineItem: async function() {
+        if (this.currentRole !== 'Admin') return;
         const editId = document.getElementById('routine-edit-id').value;
         const id = editId || generateId('RTN');
         const existing = editId ? this.data.routines.find(item => item._id === editId) : null;
@@ -448,9 +406,11 @@ export const routineModule = {
     },
 
     deleteRoutineItem: async function(id) {
+        if (this.currentRole !== 'Admin') return;
         if (!confirm('確定要刪除此行事項目？')) return;
         try {
             await deleteDoc(doc(db, 'routines', id));
+            this.closeModal('routine-edit-modal');
             this.showNotification('行事項目已刪除', 'success');
         } catch (error) {
             this.showNotification('刪除失敗：' + error.message, 'error');

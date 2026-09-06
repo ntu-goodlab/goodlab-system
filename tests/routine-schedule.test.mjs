@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateNextScheduledDue } from '../src/routine-schedule.js';
 
+test('有錨點的後續期提前完成，也必須越過本期日期', () => {
+    assert.equal(calculateNextScheduledDue({
+        schedule_anchor: '2026-01-01', next_due: '2026-03-01',
+        interval_value: 1, interval_unit: 'month'
+    }, '2026-02-28'), '2026-04-01');
+});
+
 test('週期以原排定日推進，不以實際完成日重算', () => {
     assert.equal(calculateNextScheduledDue({
         next_due: '2026-07-11',

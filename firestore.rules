@@ -8,7 +8,29 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn()
-        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        && adminMemberMatches(get(/databases/$(database)/documents/admins/$(request.auth.uid)).data);
+    }
+
+    // A stale registry entry must never keep granting access after revocation.
+    function adminMemberMatches(entry) {
+      let studentId = entry.get('student_id', '');
+      return studentId is string && studentId.size() > 0
+        && exists(/databases/$(database)/documents/members/$(studentId))
+        && get(/databases/$(database)/documents/members/$(studentId)).data.Google_UID == request.auth.uid
+        && get(/databases/$(database)/documents/members/$(studentId)).data.Role == 'Admin';
+    }
+
+    function validAdminRegistryEntry(uid) {
+      let studentId = request.resource.data.student_id;
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.resource.data.keys().hasOnly(['student_id', 'registered_at'])
+        && request.resource.data.keys().hasAll(['student_id', 'registered_at'])
+        && studentId is string
+        && request.resource.data.registered_at is string
+        && getAfter(/databases/$(database)/documents/members/$(studentId)).data.Google_UID == uid
+        && getAfter(/databases/$(database)/documents/members/$(studentId)).data.Role == 'Admin';
     }
 
     function ownsMember(studentId) {
@@ -24,13 +46,10 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/members/$(studentId)).data.Status == 'Active';
     }
 
+    // Student IDs are public identifiers, not proof of identity. Keep self-claim
+    // disabled until verified invitations and a unique UID mapping are implemented.
     function validMemberBinding() {
-      return request.auth.token.email_verified == true
-        && (!('Google_UID' in resource.data)
-          || resource.data.Google_UID == null
-          || resource.data.Google_UID == '')
-        && request.resource.data.Google_UID == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Google_UID']);
+      return false;
     }
 
     function validGoogleIdentitySync(memberId) {
@@ -94,6 +113,7 @@ service cloud.firestore {
         && request.resource.data.note is string
         && request.resource.data.note.size() <= 1000
         && request.resource.data.created_by_uid == request.auth.uid
+        && validDutyChecklist(request.resource.data)
         && (isAdmin() || (
           ownsMember(request.resource.data.assigned_to)
           && request.resource.data.created_by_student_id == request.resource.data.assigned_to
@@ -105,6 +125,8 @@ service cloud.firestore {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return ownsMember(resource.data.assigned_to)
         && resource.data.submitted == false
+        && resource.data.get('status', 'pending') == 'pending'
+        && validDutyChecklist(request.resource.data)
         && (!('note' in request.resource.data)
           || (request.resource.data.note is string && request.resource.data.note.size() <= 1000))
         && (
@@ -119,20 +141,92 @@ service cloud.firestore {
             changed.hasOnly(['status', 'carried_over_to', 'updated_at'])
             && request.resource.data.status == 'carried_over'
             && request.resource.data.carried_over_to is string
+            && validDutyCarryoverTarget()
           )
         );
     }
 
+    // Validate the successor, including a new document in the same transaction.
+    function validDutyCarryoverTarget() {
+      let targetId = request.resource.data.carried_over_to;
+      let target = getAfter(/databases/$(database)/documents/duty_records/$(targetId)).data;
+      return targetId > resource.data.week_start
+        && target.week_start == targetId
+        && target.carried_from == resource.data.week_start
+        && target.assigned_to == resource.data.assigned_to
+        && target.assignment_source == 'carryover'
+        && target.status == 'pending'
+        && target.submitted == false;
+    }
+
+    function validDutyChecklist(data) {
+      let cleaning = data.get('cleaning', {});
+      let supplies = data.get('supplies', {});
+      let statuses = [null, false, true, 'sufficient', 'needs_order', 'ordered'];
+      return cleaning is map && supplies is map
+        && cleaning.keys().hasOnly(['sweep', 'trash', 'supply_check', 'water', 'fingerprint'])
+        && cleaning.get('sweep', false) is bool
+        && cleaning.get('trash', false) is bool
+        && cleaning.get('supply_check', false) is bool
+        && cleaning.get('water', false) is bool
+        && cleaning.get('fingerprint', false) is bool
+        && supplies.keys().hasOnly([
+          'acetone', 'methanol', 'detergent', 'n2_tank', 'wiper', 'glass_slide',
+          'gloves_s', 'gloves_m', 'gloves_l', 'cotton_swab', 'aluminum_foil', 'pe_gloves'
+        ])
+        && supplies.get('acetone', null) in statuses
+        && supplies.get('methanol', null) in statuses
+        && supplies.get('detergent', null) in statuses
+        && supplies.get('n2_tank', null) in statuses
+        && supplies.get('wiper', null) in statuses
+        && supplies.get('glass_slide', null) in statuses
+        && supplies.get('gloves_s', null) in statuses
+        && supplies.get('gloves_m', null) in statuses
+        && supplies.get('gloves_l', null) in statuses
+        && supplies.get('cotton_swab', null) in statuses
+        && supplies.get('aluminum_foil', null) in statuses
+        && supplies.get('pe_gloves', null) in statuses;
+    }
+
+    function completeDutyChecklist(data) {
+      let cleaning = data.get('cleaning', {});
+      let supplies = data.get('supplies', {});
+      let ready = ['sufficient', 'ordered', true];
+      return cleaning.get('sweep', false) == true
+        && cleaning.get('trash', false) == true
+        && cleaning.get('supply_check', false) == true
+        && cleaning.get('water', false) == true
+        && cleaning.get('fingerprint', false) == true
+        && supplies.get('acetone', null) in ready
+        && supplies.get('methanol', null) in ready
+        && supplies.get('detergent', null) in ready
+        && supplies.get('n2_tank', null) in ready
+        && supplies.get('wiper', null) in ready
+        && supplies.get('glass_slide', null) in ready
+        && supplies.get('gloves_s', null) in ready
+        && supplies.get('gloves_m', null) in ready
+        && supplies.get('gloves_l', null) in ready
+        && supplies.get('cotton_swab', null) in ready
+        && supplies.get('aluminum_foil', null) in ready
+        && supplies.get('pe_gloves', null) in ready;
+    }
+
     match /members/{memberId} {
-      // 尚未綁定的登入者必須讀取名單才能完成首次綁定。
+      // Legacy full-directory reader. Must be split into private profiles and a
+      // minimal directory before deployment; signed-in is not membership proof.
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || validMemberBinding() || validGoogleIdentitySync(memberId);
     }
 
     match /admins/{uid} {
-      allow read: if isSignedIn();
-      allow write: if false;
+      allow get: if isSignedIn() && (uid == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      // Only an already-authorized administrator may grant access.
+      // getAfter validates the member and registry written in the same transaction.
+      allow create: if isAdmin() && validAdminRegistryEntry(uid);
+      allow update: if isAdmin() && validAdminRegistryEntry(uid);
+      allow delete: if isAdmin();
     }
 
     match /instruments/{instrumentId} {
@@ -141,7 +235,8 @@ service cloud.firestore {
     }
 
     match /logs/{logId} {
-      allow read, create, update, delete: if isAdmin();
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
     }
 
     match /inventory/{propId} {
@@ -153,8 +248,8 @@ service cloud.firestore {
     match /duty_records/{weekId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && validDutyCreate(weekId);
-      allow update: if isAdmin()
-        || (isSignedIn() && validDutyAssigneeUpdate());
+      allow update: if (isAdmin() || (isSignedIn() && validDutyAssigneeUpdate()))
+        && (request.resource.data.submitted != true || completeDutyChecklist(request.resource.data));
       allow delete: if isAdmin();
     }
 
