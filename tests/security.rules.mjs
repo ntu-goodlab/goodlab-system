@@ -2,7 +2,7 @@ import { before, after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, getDoc, getDocFromServer, deleteDoc, runTransaction, writeBatch } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, getDoc, getDocs, getDocFromServer, deleteDoc, runTransaction, writeBatch } from 'firebase/firestore';
 import { saveMemberAccess, unbindMemberAccess, deleteMemberAccess, syncMemberAdminRegistry } from '../src/member-access.js';
 import { writeInventoryImportChunk } from '../src/inventory-import-access.js';
 import { parseInventoryRows } from '../src/inventory-import.js';
@@ -88,6 +88,64 @@ test('維修紀錄登入後唯讀：普通成員可查看但不可新增、修�
     await assertFails(updateDoc(doc(user, 'logs/test'), { Status: 'Closed' }));
     await assertFails(deleteDoc(doc(user, 'logs/test')));
     await assertSucceeds(updateDoc(doc(authDb('admin'), 'logs/test'), { Status: 'Closed' }));
+});
+
+test('一般成員可查詢完整維修與值日紀錄列表，未登入者不可讀取，也不開放修改他人的值日', async () => {
+    // The page subscribes to a collection: a single-document get alone does not
+    // establish that the production listener's list query is authorized.
+    const week = '2026-08-31';
+    await env.withSecurityRulesDisabled(async ctx => setDoc(doc(ctx.firestore(), 'duty_records', week), {
+        week_start: week, assigned_to: 'admin-student', status: 'pending',
+        submitted: false, cleaning: {}, supplies: {}, note: ''
+    }));
+    const user = authDb('user');
+    for (const name of ['logs', 'duty_records']) {
+        const result = await assertSucceeds(getDocs(collection(user, name)));
+        assert.equal(result.size, 1);
+        await assertFails(getDocs(collection(env.unauthenticatedContext().firestore(), name)));
+    }
+    const otherDuty = doc(user, 'duty_records', week);
+    await assertFails(updateDoc(otherDuty, { note: '不可修改他人紀錄' }));
+    await assertFails(deleteDoc(otherDuty));
+});
+
+test('正式規則修補：維修列表開放登入者唯讀，保留舊管理員與值日授權', async () => {
+    const productionRules = await readFile(new URL('../rules/production.firestore.rules', import.meta.url), 'utf8');
+    const candidateRules = await readFile(new URL('../firestore.rules', import.meta.url), 'utf8');
+    const config = { projectId, firestore: { host: '127.0.0.1', port: 8085 } };
+    let production;
+    try {
+        production = await initializeTestEnvironment({ ...config, firestore: { ...config.firestore, rules: productionRules } });
+        await production.withSecurityRulesDisabled(async ctx => {
+            await setDoc(doc(ctx.firestore(), 'admins/admin'), {});
+            await setDoc(doc(ctx.firestore(), 'duty_records/2026-08-31'), {
+                week_start: '2026-08-31', assigned_to: 'admin-student', submitted: false,
+                status: 'pending', cleaning: {}, supplies: {}, note: ''
+            });
+        });
+        const user = production.authenticatedContext('user').firestore();
+        const admin = production.authenticatedContext('admin').firestore();
+        const anonymous = production.unauthenticatedContext().firestore();
+        for (const name of ['logs', 'duty_records']) {
+            assert.equal((await assertSucceeds(getDocs(collection(user, name)))).size, 1);
+            await assertFails(getDocs(collection(anonymous, name)));
+            await assertSucceeds(getDocs(collection(admin, name)));
+        }
+        await assertFails(setDoc(doc(user, 'logs/new'), { Status: 'Open' }));
+        await assertFails(updateDoc(doc(user, 'logs/test'), { Status: 'Closed' }));
+        await assertFails(deleteDoc(doc(user, 'logs/test')));
+        await assertFails(updateDoc(doc(user, 'duty_records/2026-08-31'), { note: 'denied' }));
+        await assertFails(deleteDoc(doc(user, 'duty_records/2026-08-31')));
+        await assertFails(getDocs(collection(user, 'accounting')));
+        await assertSucceeds(getDoc(doc(admin, 'accounting/test')));
+        await assertSucceeds(setDoc(doc(admin, 'logs/new'), { Status: 'Open' }));
+        await assertSucceeds(updateDoc(doc(admin, 'logs/new'), { Status: 'Closed' }));
+        await assertSucceeds(deleteDoc(doc(admin, 'logs/new')));
+    } finally {
+        await production?.cleanup();
+        const restored = await initializeTestEnvironment({ ...config, firestore: { ...config.firestore, rules: candidateRules } });
+        await restored.cleanup();
+    }
 });
 
 test('聘僱月額恢復基本值會刪除單月調整，保留其他月份', async () => {
