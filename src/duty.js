@@ -577,9 +577,6 @@ export const dutyModule = {
             </div>`;
         }
 
-        const dutyHistoryButtonHtml = `<button class="btn btn-secondary" type="button" onclick="app.switchTab('duty-history')">
-            <i class="ph ph-clock-counter-clockwise" aria-hidden="true"></i> 執行紀錄
-        </button>`;
         const adminDutyButtonsHtml = isAdmin
             ? `${record && !submitted ? `<button class="btn btn-secondary btn-sm" onclick="app.openCurrentDutyAlignmentModal()"><i class="ph ph-crosshair" aria-hidden="true"></i> 對齊本週輪值</button>` : ''}
                <button class="btn btn-secondary btn-sm" onclick="app.openNextDutyModal()"><i class="ph ph-calendar-plus" aria-hidden="true"></i> 設定下週值日生</button>`
@@ -589,7 +586,7 @@ export const dutyModule = {
             <div class="duty-card">
                 <div class="duty-card-header">
                     <h3><i class="ph ph-calendar-check" style="color:var(--primary);"></i> 本週值日生：${escapeDutyHtml(member.Name_Ch)}</h3>
-                    <div class="toolbar-actions">${dutyHistoryButtonHtml}${adminDutyButtonsHtml}</div>
+                    ${adminDutyButtonsHtml ? `<div class="toolbar-actions">${adminDutyButtonsHtml}</div>` : ''}
                 </div>
                 <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
                     <div><strong>週期：</strong>${weekId} 起</div>

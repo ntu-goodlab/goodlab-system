@@ -1,5 +1,6 @@
 // No Firebase imports: this preview cannot contact Auth or Firestore.
 import { getDutyWeekId } from '../src/duty-schedule.js';
+import { shiftDutyDateKey } from '../src/duty-history.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS } from '../src/constants.js';
 const isAdmin = new URLSearchParams(location.search).get('role') === 'admin';
 const isUnbound = new URLSearchParams(location.search).get('role') === 'guest';
@@ -51,6 +52,12 @@ const fixtures = {
         { _id: 'employment-e', student_id: 'preview-a', project_id: 'project-d', declared_start_month: '2026-11', declared_end_month: '2027-01', average_start_month: '2026-11', average_end_month: '2027-01', base_monthly_amount: 7000, month_overrides: {}, schema_version: 2 }
     ]
 };
+if (new URLSearchParams(location.search).get('dutyState') === 'carryover') {
+    const previousWeek = shiftDutyDateKey(week, -7);
+    fixtures.duty_records = [{ _id: previousWeek, week_start: previousWeek,
+        assigned_to: 'preview-b', scheduled_to: 'preview-b', assignment_source: 'auto',
+        status: 'pending', submitted: false, cleaning: {}, supplies: {}, note: '示範：等待原值日生建立順延清單' }];
+}
 if (new URLSearchParams(location.search).get('empty') === '1') { fixtures.projects = []; fixtures.employments = []; }
 export const db = {}, auth = {}, provider = {};
 export const collection = (_db, path) => ({ path });
