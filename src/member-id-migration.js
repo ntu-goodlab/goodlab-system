@@ -28,6 +28,10 @@ const MEMBER_REFERENCE_DEFINITIONS = [
         referenceFields: ['scheduled_to', 'assigned_to', 'substitute_pending', 'substitute_from']
     },
     {
+        dataKey: 'duty_assignments', collection: 'duty_assignments', label: '核准值日指派',
+        idFields: ['_id'], referenceFields: ['scheduled_to', 'assigned_to']
+    },
+    {
         dataKey: 'employments',
         collection: 'employments',
         label: '聘僱紀錄',
@@ -152,7 +156,7 @@ export function createMemberIdMigrationPlan(data, oldId, newId) {
         issues,
         affectedDocuments: operations.length,
         // A bound member also updates or removes one administrator registry entry.
-        totalWrites: operations.length + 2 + (data?.members?.some(member =>
+        totalWrites: operations.length + 2 + (Array.isArray(data?.duty_assignments) ? 2 : 0) + (data?.members?.some(member =>
             sameStudentId(member.Student_ID, sourceId) && member.Google_UID) ? 1 : 0)
     };
 }

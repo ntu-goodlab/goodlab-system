@@ -13,13 +13,16 @@ import { LOCATIONS, LOCATIONS_WITH_OTHER } from './constants.js';
 
 // === 功能模組 ===
 import { authModule } from './auth.js';
-import { deleteMemberAccess } from './member-access.js';
+import { deleteMemberAccess } from './member-access-routing.js';
+import { approvedAccessEnabled } from './access-mode.js';
+import { approvedAuthModule } from './approved-auth.js';
 import { membersModule } from './members.js';
 import { instrumentsModule } from './instruments.js';
 import { logsModule } from './logs.js';
 import { accountingModule } from './accounting.js';
 import { inventoryModule } from './inventory.js';
 import { dutyModule } from './duty.js';
+import { approvedDutyModule } from './approved-duty.js';
 import { routineModule } from './routine.js';
 import { employmentModule } from './employment.js';
 import { dashboardModule } from './dashboard.js';
@@ -31,7 +34,7 @@ const app = {
         members: [], instruments: [], logs: [], accounting: [], inventory: [],
         duty_records: [], duty_state: null,
         routines: [], bulletins: [],
-        projects: [], employments: []
+        projects: [], employments: [], access_requests: [], duty_assignments: []
     },
     invSortState: { key: 'Property_ID', direction: 'asc' },
     tempLinkedPropId: null,
@@ -48,6 +51,7 @@ const app = {
     currentMember: null, // Phase 5: 當前登入的 member 完整資料
     membersLoaded: false,
     realtimeUnsubscribers: new Map(),
+    realtimeTokens: new Map(),
     realtimeLoadState: {},
     realtimeProfile: 'Anonymous',
     modalReturnFocus: new Map(),
@@ -290,6 +294,9 @@ const app = {
     getRealtimeConfig: function() {
         return {
             members: { dataKey: 'members', withId: false, onData: () => { this.membersLoaded = true; this.renderMembers(); this.checkUserRole(); } },
+            member_directory: { dataKey: 'members', withId: false, onData: () => { this.membersLoaded = true; this.renderMembers(); this.renderDuty(); this.renderOverview(); } },
+            access_requests: { dataKey: 'access_requests', withId: true, onData: () => this.renderAccessRequests?.() },
+            duty_assignments: { dataKey: 'duty_assignments', withId: true, onData: () => { this.renderDuty(); this.renderOverview(); } },
             instruments: { dataKey: 'instruments', withId: false, onData: () => { this.renderInstruments(); this.renderOverview(); } },
             logs: { dataKey: 'logs', withId: false, onData: () => { this.renderLogs(); this.renderOverview(); } },
             inventory: { dataKey: 'inventory', withId: false, onData: () => { this.renderInventory(); this.renderOverview(); } },
@@ -319,6 +326,11 @@ const app = {
             User: ['members', 'instruments', 'logs', 'inventory', 'duty_records', 'public_routines', 'public_bulletins'],
             Admin: ['members', 'instruments', 'logs', 'inventory', 'duty_records', 'accounting', 'routines', 'bulletins', 'projects', 'employments']
         };
+        if (this.approvedAccessEnabled) {
+            allowedByProfile.Guest = [];
+            allowedByProfile.User = ['member_directory', 'instruments', 'logs', 'inventory', 'duty_records', 'duty_assignments', 'public_routines', 'public_bulletins'];
+            allowedByProfile.Admin.push('access_requests', 'duty_assignments');
+        }
         const allowed = new Set(allowedByProfile[profile] || []);
         const config = this.getRealtimeConfig();
 
@@ -326,6 +338,7 @@ const app = {
             if (!allowed.has(name)) {
                 unsubscribe();
                 this.realtimeUnsubscribers.delete(name);
+                this.realtimeTokens?.delete(name);
                 delete this.realtimeLoadState[name];
                 this.data[config[name].dataKey] = [];
             }
@@ -334,18 +347,24 @@ const app = {
         allowed.forEach(name => {
             if (this.realtimeUnsubscribers.has(name)) return;
             const item = config[name];
+            const token = Symbol(name);
+            this.realtimeTokens ??= new Map();
+            this.realtimeTokens.set(name, token);
             const source = item.source ? item.source() : collection(db, item.collectionName || name);
             this.realtimeLoadState[name] = 'loading';
             const unsubscribe = onSnapshot(source, snapshot => {
+                if (this.realtimeTokens.get(name) !== token) return;
                 this.realtimeLoadState[name] = 'loaded';
                 this.data[item.dataKey] = snapshot.docs.map(document => item.withId ? ({ _id: document.id, ...document.data() }) : document.data());
                 item.onData();
+                if (name === 'members' && this.approvedAccessEnabled) this.renderAccessRequests();
                 this.renderDataHealth();
                 const migrationPanel = document.getElementById('member-id-migration');
                 if (migrationPanel && !migrationPanel.classList.contains('hidden')) {
                     this.updateMemberIdMigrationPreview?.();
                 }
             }, error => {
+                if (this.realtimeTokens.get(name) !== token) return;
                 this.realtimeLoadState[name] = 'error';
                 this.data[item.dataKey] = [];
                 if (name === 'members') this.membersLoaded = false;
@@ -495,12 +514,14 @@ const app = {
 
 // === 混入所有功能模組 ===
 Object.assign(app, authModule);
+if (approvedAccessEnabled) Object.assign(app, approvedAuthModule);
 Object.assign(app, membersModule);
 Object.assign(app, instrumentsModule);
 Object.assign(app, logsModule);
 Object.assign(app, accountingModule);
 Object.assign(app, inventoryModule);
 Object.assign(app, dutyModule);
+if (approvedAccessEnabled) Object.assign(app, approvedDutyModule);
 Object.assign(app, routineModule);
 Object.assign(app, employmentModule);
 Object.assign(app, dashboardModule);

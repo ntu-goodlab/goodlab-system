@@ -1,69 +1,41 @@
-# GOODLAB — Firestore Security Rules 上線指南
+# GOODLAB — Firestore 規則與發布狀態
 
-專案根目錄的 [`firestore.rules`](../firestore.rules) 是本地候選規則，尚未發布。2026-09-06 已通過 17 項本地權限測試，仍有身分綁定、成員欄位可見範圍與週指派風險。先閱讀 [本次修補與未完成事項](REVIEW_IMPLEMENTATION_2026-09-06.md)，保留線上暫時停止自助綁定與新增 admins 的規則；不能僅因本地測試通過就直接覆蓋。
+> 發布更新：使用者已授權新版上線，部署設定與 Pages build 已改為核准成員模式。以下為切換前紀錄；目前方案與驗證、回復步驟以 [新版發布紀錄](APPROVED_ACCESS_RELEASE.md) 為準。正式完成狀態須查看發布收據。
 
-## 這版保護什麼
+## 目前正式環境
 
-| 資料 | 一般成員 | Admin |
+2026-09-09 已將 `logs` 恢復 Admin-only，並讀回核對原始 ruleset。正式狀態及恢复證據見 [維修紀錄權限紀錄](MEMBER_RECORD_ACCESS.md)。這次全面重寫沒有再修改線上權限。
+
+`firebase.json` 與 `firebase.production.json` 都指向 `rules/production.firestore.rules`。根目錄 `firestore.rules` 是先前尚未完成迁移的候選版，已退出預設部署設定，保留作既有回歸測試。它仍包含登入者可讀資料的舊設計，不能手動貼到正式環境。
+
+## 新的完整候選版
+
+新版已完成本機網站整合，透過 `VITE_ACCESS_MODEL=approved` 啟用；現有預設模式與線上權限尚未切換。最新進度與既有綁定帳號遷移方式見 [整合紀錄](APPROVED_ACCESS_INTEGRATION.md)。
+
+使用者已選擇「管理員核對 Google 帳號後開通」。完整規則、權限矩陣、交易 helper 與上線前整合要求見 [管理員核准成員版](APPROVED_MEMBERSHIP_RULES.md)。
+
+- 規則：`rules/member-approved.firestore.rules`
+- 核准、升降權、撤權 helper：`src/approved-member-access.js`
+- 真正 Firestore emulator 請求測試：`tests/member-approved.rules.mjs`
+- 新版測試指令：`npm run test:rules:approved`
+- 既有規則回歸測試：`npm run test:rules`
+
+新版用管理員核准的 UID 對應驗證成員資格。Guest 只能存取自己的申請／授權狀態，不能讀實驗室資料；核准成員可讀維修、儀器、盤點及值日，行政集合僅 Admin。完整成員資料與最小名錄分開。
+
+## 發布前提
+
+新版已接上登入、管理介面、名錄查詢及管理員確認值日排班；尚未為正式既有帳號建立已核准 UID 對應。不可僅因本機測試通過就直接部署，否則合法管理員及成員可能被拒絕。
+
+必須先完成新版文件中的既有帳號核對、至少一位管理員的可信任初始化、前端整合、值日指派及假資料整合驗收，再備份當時線上規則與遷移資料，取得正式發布確認。Google UID、信箱、角色或目前線上版本不一致時應停止核對，不能改回登入即可讀寫。
+
+目前 GitHub Pages 的網站部署不會發布 Firestore Rules。現有 GitHub 驗證流程已加入新版權限測試，但未在本機宣稱雲端 CI 已通過。
+
+## 規則版本辨識
+
+| 檔案 | 用途 | 是否部署來源 |
 |---|---|---|
-| 成員 | 登入後仍可讀完整文件（待分離私密欄位）；暫停所有以學號自行認領，既有綁定可同步本人 Google 身分 | 可管理 |
-| 儀器 | 可讀 | 可管理 |
-| 維修紀錄 | 登入後可讀，不可新增、修改或刪除；目前讀取界線不驗證名冊綁定資格 | 可完整管理 |
-| 產編 | 盤點開放時可更新狀態、區域、細項位置，並留下操作者 | 可完整管理 |
-| 值日 | 已指派本人且待處理的紀錄可更新；檢查欄位與型別，提交需要完整清單；順延需相符的新週，舊週不能再編輯。新週建立的輪值歸屬尚未有可信任後端驗證 | 可對齊與管理，提交仍檢查完整性 |
-| 公告／行事 | 只讀取已公開資料 | 可管理 |
-| 公積金／聘僱 | 不可讀取 | 可完整管理 |
+| `rules/production.firestore.rules` | 與最近核對的正式環境相符，logs Admin-only | 是 |
+| `rules/member-approved.firestore.rules` | 本次完整重寫，待資料與網站整合 | 否 |
+| `firestore.rules` | 舊的待遷移候選版，僅保留回歸驗證 | 否 |
 
-畢業成員若已完成帳號綁定，仍可登入；這版沒有以 `Status` 阻擋登入。
-
-## 發布前準備
-
-1. Firebase Console → Firestore Database → 資料。
-2. 確認現有 Admin 的 `admins/{Google UID}.student_id` 對應 member 文件 ID，該文件 `Google_UID` 與 `Role=Admin` 一致。登入不會自行建立管理員登錄；只有既有授權管理員能透過成員交易授權他人。
-3. `Email` 是學校通知信箱；登入用 Google 信箱與顯示名稱會另存為 `Google_Email`、`Google_Display_Name`，三者互不替代。
-4. 至少保留一個可用 Admin UID，避免發布後把自己鎖在管理功能之外。
-
-## 發布方式
-
-目前網站使用 GitHub Pages，發布網頁不會自動發布 Firestore Rules。下列為未來發布程序，必須先完成未解決風險與管理員資料相容性驗收、取得正式發布授權；本次未執行：
-
-### Firebase Console（最直接）
-
-1. Firebase Console → Firestore Database → Rules。
-2. 用 [`firestore.rules`](../firestore.rules) 的完整內容取代現有規則。
-3. 按「發布」。
-
-### Firebase CLI
-
-在已登入正確 Firebase 帳號且選好專案後執行：
-
-```bash
-firebase deploy --only firestore:rules
-```
-
-專案根目錄的 `firebase.json` 已指向正確規則檔。
-
-## 必做驗收
-
-先依 [本地驗證](LOCAL_VALIDATION.md) 使用模擬器；正式帳號驗收需另行安排，不應在正式資料庫執行破壞性權限測試：
-
-1. 未登入者讀 `members`：拒絕。
-2. 一般成員讀取或新增 `accounting`：拒絕；讀取 `logs` 允許，新增／修改／刪除拒絕。
-3. 一般成員修改別人的 `duty_records`：拒絕。
-4. 當週值日生勾選自己的清單：允許。
-5. 產編關閉時，一般成員修改產編：拒絕；開放後只允許狀態、區域與細項位置。
-6. 所有非 Admin 自行認領必須拒絕，包括已驗證 Google 帳號；普通 User 自助綁定何時恢復，須先解決學號冒名與 UID 唯一對應問題。
-7. 已被其他 Google UID 認領的學號不能再次綁定。
-8. Admin 的公告、行事、帳務、聘僱與維修管理：允許。
-
-若 Admin 操作被拒絕，先核對登錄、成員文件 ID、UID、角色及目前線上規則。網站不會自動補建白名單，也不應直接發布未驗收的規則來嘗試修復。
-
-## 2026-09-06 權限補強：本輪範圍與後續設計
-
-- 本地停用學號自助認領，與既有線上暫停措施一致；未發布規則。前端改為顯示帳號未開通與核對方式，不再提供必定失敗的學號送出表單。這是暫停措施，不是新的邀請／審核流程。
-- 值日清潔僅接受既定布林欄位；耗材接受尚未確認、舊版布林與三種現行狀態。拒絕額外欄位、錯誤型別、超長備註與非指派者修改。
-- 順延的目標必須較新，指回原週並具有相同實際執行者；getAfter 支援同筆交易建立新週。已順延舊週禁止一般成員再改內容。尚未驗證真正當週或完整輪值，因此不能宣稱已杜絕任意建立週指派。
-- 下一階段的綁定方式已向使用者詢問：管理員預先核准登入信箱，或申請後由管理員核對。尚未收到選擇，不建立新的邀請或審核資料。
-- 成員隱私仍未修復：目前 members 整份快照包含 Google_UID、Google_Email、Previous_Google_* 等欄位；只把欄位從畫面隱藏不能限制資料讀取。後續需拆成最小成員名冊與私密身分資料，並讓未開通帳號只查自己。
-- 唯一綁定需採 UID 對應文件與交易檢查；既有成員須先唯讀檢查重複 UID，再準備可重跑的資料遷移。先驗證管理員登入、解除綁定、刪除與學號轉移都能原子維護對應後，才恢復新成員開通。
-- 週指派需可信任的排程／指派來源。不能單純禁止成員建立週清單，否則目前自動輪值會中斷；需一併準備後端排程與舊紀錄相容測試。
+官方文件：[條件與原子交易](https://firebase.google.com/docs/firestore/security/rules-conditions)、[查詢授權](https://firebase.google.com/docs/firestore/security/rules-query)、[欄位存取](https://firebase.google.com/docs/firestore/security/rules-fields) 。

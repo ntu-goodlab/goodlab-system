@@ -441,14 +441,14 @@ export const dutyModule = {
             : '';
         const assignmentStatusHtml = assignedTo !== scheduledTo
             ? `<span class="status-badge status-badge-warning">代班：原排定 ${escapeDutyHtml(scheduledMember?.Name_Ch || scheduledTo)}</span>`
-            : record?.assignment_source === 'admin'
+            : ['admin', 'manual'].includes(record?.assignment_source)
                 ? '<span class="status-badge status-badge-info">Admin 對齊</span>'
                 : '<span class="status-badge">依輪值排定</span>';
         const nextAssignmentStatusHtml = nextWeekRecord
-            ? nextWeekRecord.assignment_source === 'admin'
+            ? ['admin', 'manual'].includes(nextWeekRecord.assignment_source)
                 ? '<span class="status-badge status-badge-info">Admin 指定</span>'
                 : '<span class="status-badge">已建立</span>'
-            : '<span class="status-badge">依輪值推算</span>';
+            : `<span class="status-badge">${this.approvedAccessEnabled ? '建議順序，待管理員核准' : '依輪值推算'}</span>`;
 
         // 輪值順序列表
         const rosterHtml = roster.map(m => {

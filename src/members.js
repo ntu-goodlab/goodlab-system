@@ -13,7 +13,7 @@ import {
     validateMemberIdMigration
 } from './member-id-migration.js';
 import { MEMBER_GROUPS, memberGroupKey, compareMembersForDirectory } from './member-directory.js';
-import { saveMemberAccess, unbindMemberAccess, syncMemberAdminRegistry } from './member-access.js';
+import { saveMemberAccess, unbindMemberAccess, syncMemberAdminRegistry } from './member-access-routing.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -131,7 +131,7 @@ export const membersModule = {
                         </span>
                         <span class="member-card-meta">
                             <span><i class="ph ph-identification-card" aria-hidden="true"></i>${escapeHtml(member.Student_ID)}</span>
-                            <span><i class="ph ph-buildings" aria-hidden="true"></i>${escapeHtml(member.Department || '未填系所')}</span>
+                            ${!this.approvedAccessEnabled || isAdmin ? `<span><i class="ph ph-buildings" aria-hidden="true"></i>${escapeHtml(member.Department || '未填系所')}</span>` : ''}
                         </span>
                         ${previousIds.length ? `<span class="member-card-previous">曾用學號：${previousIds.map(escapeHtml).join('、')}</span>` : ''}
                         ${isAdmin ? '<span class="member-card-edit"><i class="ph ph-pencil-simple" aria-hidden="true"></i>編輯</span>' : ''}
@@ -329,6 +329,9 @@ export const membersModule = {
         const unavailableData = MEMBER_MIGRATION_REQUIRED_DATA.filter(item =>
             this.realtimeLoadState?.[item.key] !== 'loaded'
         );
+        if (this.approvedAccessEnabled && this.realtimeLoadState?.duty_assignments !== 'loaded') {
+            unavailableData.push({ label: '核准值日指派' });
+        }
         const errors = newId
             ? [...validation.errors, ...(plan?.issues || [])]
             : [];
@@ -401,7 +404,7 @@ export const membersModule = {
         const confirmed = Boolean(document.getElementById('migration-confirm')?.checked);
         const dataReady = MEMBER_MIGRATION_REQUIRED_DATA.every(item =>
             this.realtimeLoadState?.[item.key] === 'loaded'
-        );
+        ) && (!this.approvedAccessEnabled || this.realtimeLoadState?.duty_assignments === 'loaded');
         const previewIsCurrent = migrationPlanSignature(this.memberIdMigrationPlan) === migrationPlanSignature(plan);
 
         if (!validation.valid || plan.issues.length || plan.totalWrites > MEMBER_MIGRATION_WRITE_LIMIT || !sourceMember || !confirmed || !dataReady || !previewIsCurrent) {
@@ -467,7 +470,7 @@ export const membersModule = {
                 if (before.Google_UID === this.currentUser?.uid && !migrationOptions.preserveGoogleBinding) {
                     throw new Error('不能在學號異動時解除自己的管理員綁定，請由另一位管理員操作。');
                 }
-                syncMemberAdminRegistry(transaction, db, before, migrated, changedAt);
+                await syncMemberAdminRegistry(transaction, db, before, migrated, changedAt, this.currentUser?.uid);
                 transaction.set(newMemberRef, migrated);
                 plan.operations.forEach(operation => {
                     transaction.update(

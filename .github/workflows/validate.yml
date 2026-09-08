@@ -30,5 +30,9 @@ jobs:
         run: node scripts/prepare-rules-emulator.mjs
       - name: Test database rules against local demo data
         run: npm run test:rules
+      - name: Test approved membership rules against local demo data
+        run: npm run test:rules:approved
       - name: Build website
+        env:
+          VITE_ACCESS_MODEL: approved
         run: npm run build
