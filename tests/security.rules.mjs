@@ -109,7 +109,7 @@ test('一般成員可查詢完整維修與值日紀錄列表，未登入者不�
     await assertFails(deleteDoc(otherDuty));
 });
 
-test('正式規則修補：維修列表開放登入者唯讀，保留舊管理員與值日授權', async () => {
+test('正式規則恢復：維修紀錄只限 Admin，拒絕已登入 Guest 與普通成員，保留值日授權', async () => {
     const productionRules = await readFile(new URL('../rules/production.firestore.rules', import.meta.url), 'utf8');
     const candidateRules = await readFile(new URL('../firestore.rules', import.meta.url), 'utf8');
     const config = { projectId, firestore: { host: '127.0.0.1', port: 8085 } };
@@ -126,14 +126,21 @@ test('正式規則修補：維修列表開放登入者唯讀，保留舊管理�
         const user = production.authenticatedContext('user').firestore();
         const admin = production.authenticatedContext('admin').firestore();
         const anonymous = production.unauthenticatedContext().firestore();
-        for (const name of ['logs', 'duty_records']) {
-            assert.equal((await assertSucceeds(getDocs(collection(user, name)))).size, 1);
-            await assertFails(getDocs(collection(anonymous, name)));
-            await assertSucceeds(getDocs(collection(admin, name)));
+        const guest = production.authenticatedContext('unbound-guest', {
+            email: 'unbound-guest@example.test', email_verified: true
+        }).firestore();
+        for (const db of [anonymous, guest, user]) {
+            await assertFails(getDoc(doc(db, 'logs/test')));
+            await assertFails(getDocs(collection(db, 'logs')));
+            await assertFails(setDoc(doc(db, 'logs/new'), { Status: 'Open' }));
+            await assertFails(updateDoc(doc(db, 'logs/test'), { Status: 'Closed' }));
+            await assertFails(deleteDoc(doc(db, 'logs/test')));
         }
-        await assertFails(setDoc(doc(user, 'logs/new'), { Status: 'Open' }));
-        await assertFails(updateDoc(doc(user, 'logs/test'), { Status: 'Closed' }));
-        await assertFails(deleteDoc(doc(user, 'logs/test')));
+        assert.equal((await assertSucceeds(getDocs(collection(admin, 'logs')))).size, 1);
+        await assertSucceeds(getDoc(doc(admin, 'logs/test')));
+        assert.equal((await assertSucceeds(getDocs(collection(user, 'duty_records')))).size, 1);
+        await assertFails(getDocs(collection(anonymous, 'duty_records')));
+        await assertSucceeds(getDocs(collection(admin, 'duty_records')));
         await assertFails(updateDoc(doc(user, 'duty_records/2026-08-31'), { note: 'denied' }));
         await assertFails(deleteDoc(doc(user, 'duty_records/2026-08-31')));
         await assertFails(getDocs(collection(user, 'accounting')));

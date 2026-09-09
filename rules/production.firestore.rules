@@ -153,8 +153,7 @@ service cloud.firestore {
     }
 
     match /logs/{logId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isAdmin();
+      allow read, create, update, delete: if isAdmin();
     }
 
     match /inventory/{propId} {

@@ -6,7 +6,9 @@ const isAdmin = new URLSearchParams(location.search).get('role') === 'admin';
 const isUnbound = new URLSearchParams(location.search).get('role') === 'guest';
 const legacyAdmin = new URLSearchParams(location.search).get('legacyAdmin') === '1';
 const uid = isUnbound ? 'preview-unbound' : isAdmin ? 'preview-admin' : 'preview-user';
-const user = { uid, displayName: '預覽成員', email: `${uid}@example.test` };
+const approvedPreview = import.meta.env.VITE_ACCESS_MODEL === 'approved';
+const user = { uid, displayName: '預覽成員', email: `${uid}@example.test`, emailVerified: true,
+    getIdTokenResult: async () => ({ claims: { email: `${uid}@example.test`, email_verified: true }, signInProvider: 'google.com' }) };
 const members = [
     { Student_ID: 'preview-a', Name_Ch: '林同學', Role: 'User', Status: 'Active', Degree: 'Master',
         Enrollment_Date: '2025-09-01', Department: '電機工程學系', Email: 'student@example.test',
@@ -59,6 +61,18 @@ if (new URLSearchParams(location.search).get('dutyState') === 'carryover') {
         status: 'pending', submitted: false, cleaning: {}, supplies: {}, note: '示範：等待原值日生建立順延清單' }];
 }
 if (new URLSearchParams(location.search).get('empty') === '1') { fixtures.projects = []; fixtures.employments = []; }
+if (approvedPreview) {
+    members.push({ Student_ID: 'preview-new', Name_Ch: '待開通同學', Name_En: '', Role: 'User',
+        Status: 'Active', Degree: 'Master', Enrollment_Date: '2026-09-01', Google_UID: null });
+    fixtures.member_access = members.filter(m => m.Google_UID).map(m => ({ _id: m.Google_UID,
+        student_id: m.Student_ID, email: m.Google_Email || `${m.Google_UID}@example.test`, role: m.Role }));
+    fixtures.member_directory = members.map(m => ({ Student_ID: m.Student_ID, Name_Ch: m.Name_Ch,
+        Name_En: m.Name_En || '', Degree: m.Degree, Status: m.Status, Role: m.Role, Enrollment_Date: m.Enrollment_Date || '' }));
+    fixtures.access_requests = [{ _id: 'preview-unbound', student_id: 'preview-new',
+        email: 'preview-unbound@example.test', display_name: '預覽成員' }];
+    fixtures.duty_assignments = fixtures.duty_records.map(r => ({ _id: r._id,
+        assigned_to: r.assigned_to, scheduled_to: r.scheduled_to, assignment_source: r.assignment_source, carried_from: r.carried_from || null }));
+}
 export const db = {}, auth = {}, provider = {};
 export const collection = (_db, path) => ({ path });
 export const doc = (_db, ...parts) => ({ path: parts.join('/'), isDoc: true });
@@ -91,8 +105,37 @@ export function onSnapshot(source, optionsOrNext, maybeNext) {
 }
 export const onAuthStateChanged = (_auth, next) => { queueMicrotask(() => next(user)); return () => {}; };
 const denyWrite = async () => { throw new Error('這是本地假資料預覽，儲存功能停用。'); };
-export const getDoc = denyWrite, setDoc = denyWrite, updateDoc = denyWrite, deleteDoc = denyWrite;
-export const runTransaction = denyWrite, signInWithPopup = denyWrite, signOut = denyWrite;
+const fixtureId = row => row._id || row.Student_ID || row.Property_ID || row.Instrument_ID || row.Txn_ID || row.Log_ID;
+function readFixture(ref) {
+    const [name, id] = ref.path.split('/');
+    const data = fixtures[name]?.find(row => fixtureId(row) === id);
+    return { ref, id, exists: () => Boolean(data), data: () => data ? structuredClone(data) : undefined };
+}
+function applyFixtureWrite(kind, ref, payload, options) {
+    const [name, id] = ref.path.split('/');
+    fixtures[name] ??= [];
+    const index = fixtures[name].findIndex(row => fixtureId(row) === id);
+    if (kind === 'delete') { if (index >= 0) fixtures[name].splice(index, 1); return; }
+    const result = { ...(kind === 'update' || options?.merge ? fixtures[name][index] || {} : {}), ...payload, _id: id };
+    if (index >= 0) fixtures[name][index] = result; else fixtures[name].push(result);
+}
+// This in-memory preview is for UI checks only; real authorization is tested in the emulator.
+export async function runTransaction(_db, callback) {
+    if (!approvedPreview) return denyWrite();
+    const writes = [];
+    const result = await callback({ get: async ref => readFixture(ref),
+        set: (...args) => writes.push(['set', ...args]), update: (...args) => writes.push(['update', ...args]),
+        delete: ref => writes.push(['delete', ref]) });
+    writes.forEach(args => applyFixtureWrite(...args));
+    queueMicrotask(() => [...refreshers].forEach(refresh => refresh()));
+    return result;
+}
+export const getDoc = async ref => approvedPreview ? readFixture(ref) : denyWrite();
+export const setDoc = (ref, value, options) => runTransaction(db, async tx => tx.set(ref, value, options));
+export const updateDoc = (ref, value) => runTransaction(db, async tx => tx.update(ref, value));
+export const deleteDoc = ref => runTransaction(db, async tx => tx.delete(ref));
+export const signInWithPopup = denyWrite, signOut = denyWrite;
+export const serverTimestamp = () => new Date().toISOString();
 export const writeBatch = () => ({ set() {}, update() {}, delete() {}, commit: denyWrite });
 export const arrayUnion = (...items) => items;
 export const deleteField = () => 'preview-delete-field';

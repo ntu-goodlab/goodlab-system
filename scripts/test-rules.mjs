@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 
 // This runner never invokes Firebase CLI, loads .env, or uses a real project.
 const root = fileURLToPath(new URL('../', import.meta.url));
+const args = process.argv.slice(2);
+if (args.length > 1 || (args.length === 1 && args[0] !== '--approved')) throw new Error('Unknown local rules test suite');
+const approved = args[0] === '--approved';
+const rulesFile = approved ? 'rules/member-approved.firestore.rules' : 'firestore.rules';
+const testFile = approved ? 'tests/member-approved.rules.mjs' : 'tests/security.rules.mjs';
 const project = 'demo-goodlab-security';
 const port = 8085;
 const host = `127.0.0.1:${port}`;
@@ -21,7 +26,7 @@ await new Promise((resolveReady, reject) => {
 });
 const log = createWriteStream(resolve(local, 'firestore-test.log'));
 const emulator = spawn(java, ['-Duser.language=en', '-Duser.country=US', '-jar', jar, '--host', '127.0.0.1', '--port', String(port),
-    '--project_id', project, '--single_project_mode', 'true', '--rules', resolve(root, 'firestore.rules')], {
+    '--project_id', project, '--single_project_mode', 'true', '--rules', resolve(root, rulesFile)], {
     cwd: local, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']
 });
 let ready = false;
@@ -45,7 +50,7 @@ try {
     delete env.FIREBASE_TOKEN;
     console.log(`權限測試只使用 ${project} @ ${host}`);
     process.exitCode = await new Promise((done, reject) => {
-        const child = spawn(process.execPath, ['--test', 'tests/security.rules.mjs'], {
+        const child = spawn(process.execPath, ['--test', testFile], {
             cwd: root, env, windowsHide: true, stdio: 'inherit'
         });
         child.on('error', reject);

@@ -1,5 +1,17 @@
 # 一般成員紀錄讀取修正
 
+## 目前正式狀態：2026-09-09 已恢復維修紀錄 Admin-only
+
+經使用者明確同意，已於台灣時間 2026-09-09 00:47 將 `goodlab-system` 的 `cloud.firestore` release 恢復至 `476a4e21-7877-42b7-8db0-071f7a9e770e`。發布後讀回確認與保存的原始規則完全相同；相對於恢復前的 `923ff391-04c5-4062-8774-9a1ce15ff272`，唯一差異是 `logs` 恢復 `allow read, create, update, delete: if isAdmin();`。其他集合及 Admin 判定未變動。
+
+恢復原因：Firebase 登入不等於實驗室成員資格，已登入但未綁定的 Guest 也符合先前的 `isSignedIn()`。正式規則現在拒絕 Guest、一般成員及未登入者讀寫維修紀錄；UID 存在於 `admins` 登錄的管理員保留讀寫權限。一般成員查看維修紀錄的需求仍待可靠的成員驗證機制實作。
+
+`node scripts/test-rules.mjs` 的 20 項本機模擬器測試全部通過，正式規則測試包含上述三類非管理員的單筆讀取、列表查詢、新增、修改及刪除拒絕，以及管理員讀寫成功。未使用正式維修資料進行測試，未查核歷史存取。恢復前快照與發布回讀結果分別保存於 `.local-tools/logs-admin-only-preflight.json`、`.local-tools/logs-admin-only-restored.json`；原始備份未覆寫。
+
+部署來源為 `firebase.production.json` 指定的 `rules/production.firestore.rules`，本地檔案已同步恢復。根目錄 `firestore.rules` 仍是尚未完成遷移的候選版本，包含登入者可讀 `logs` 的舊設計，不能直接部署；其測試通過不代表該候選版本已獲准上線。
+
+以下保留 2026-09-07 的歷史紀錄，其中開放登入者讀取及當時發布版本的描述已被上述恢復結果取代。
+
 ## 已確認原因
 
 2026-09-07 透過 Firebase CLI 授權讀取 `goodlab-system` 的正式規則，原 ruleset 為 `476a4e21-7877-42b7-8db0-071f7a9e770e`。
