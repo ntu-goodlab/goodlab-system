@@ -2,6 +2,7 @@ import { auth, db, doc, onSnapshot, onAuthStateChanged } from './firebase.js';
 import { createApprovedSession } from './approved-session.js';
 import { requestApprovedMembership, approveMembershipRequest } from './approved-member-access.js';
 import { escapeHtml } from './utils.js';
+import { approvalState } from './approval-state.js';
 
 export const approvedAuthModule = {
     approvedAccessEnabled: true,
@@ -123,21 +124,32 @@ export const approvedAuthModule = {
             const text = document.createElement('p');
             text.textContent = `${member?.Name_Ch || '查無成員'} · ${request.student_id} · ${request.email}（Google 顯示名稱：${request.display_name || '未提供'}）`;
             const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-primary btn-sm';
-            button.textContent = member?.Google_UID ? '已有綁定，請先核對' : '核對並開通';
-            button.disabled = !member || Boolean(member.Google_UID) || member.Status !== 'Active';
+            const state = approvalState(member, request);
+            button.textContent = state.label;
+            button.disabled = state.blocked;
             button.addEventListener('click', async () => {
                 document.getElementById('approve-access-modal')?.remove();
                 const modal = document.createElement('div'); modal.id = 'approve-access-modal'; modal.className = 'modal';
                 modal.innerHTML = `<div class="modal-content"><div class="modal-header"><h3>確認開通 Google 帳號</h3></div>
                     <div class="modal-body"><p>請確認已向本人核對以下資料：</p><p><strong>${escapeHtml(member.Name_Ch)}</strong>（${escapeHtml(request.student_id)}）</p>
-                    <p>${escapeHtml(request.email)}</p><p>本次會開通一般成員權限。</p><p class="form-error" role="alert"></p></div>
+                    <p>${escapeHtml(request.email)}</p><p>本次會開通一般成員權限。</p>
+                    ${state.reactivate ? '<p>此成員目前為已離校。恢復後會改為在學／在職，清空目前離校日期並保留原日期於歷史。</p><label><input type="checkbox" data-reactivate>我已確認要恢復這位成員的在學／在職狀態與使用權限</label>' : ''}
+                    <p class="form-error" role="alert"></p></div>
                     <div class="modal-footer"><button class="btn btn-secondary" type="button" data-cancel>取消</button><button class="btn btn-primary" type="button" data-approve>已核對，開通帳號</button></div></div>`;
                 modal.querySelector('[data-cancel]').addEventListener('click', () => modal.remove());
+                if (state.reactivate) {
+                    modal.querySelector('[data-approve]').disabled = true;
+                    modal.querySelector('[data-reactivate]').addEventListener('change', event => {
+                        modal.querySelector('[data-approve]').disabled = !event.target.checked;
+                    });
+                }
                 modal.querySelector('[data-approve]').addEventListener('click', async event => {
                     event.target.disabled = true;
                     try {
                         await approveMembershipRequest(db, { uid: request._id, studentId: request.student_id,
-                            expectedEmail: request.email, actorUid: this.currentUser?.uid });
+                            expectedEmail: request.email, actorUid: this.currentUser?.uid,
+                            expectedMemberStatus: member.Status,
+                            reactivateInactive: modal.querySelector('[data-reactivate]')?.checked === true });
                         modal.remove(); this.showNotification('已開通一般成員權限。', 'success');
                     } catch (error) {
                         modal.querySelector('[role="alert"]').textContent = error.message;

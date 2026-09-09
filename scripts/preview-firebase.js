@@ -70,6 +70,11 @@ if (approvedPreview) {
         Name_En: m.Name_En || '', Degree: m.Degree, Status: m.Status, Role: m.Role, Enrollment_Date: m.Enrollment_Date || '' }));
     fixtures.access_requests = [{ _id: 'preview-unbound', student_id: 'preview-new',
         email: 'preview-unbound@example.test', display_name: '預覽成員' }];
+    if (new URLSearchParams(location.search).get('recovery') === '1') {
+        const pending = members.find(m => m.Student_ID === 'preview-new');
+        Object.assign(pending, { Status: 'Alumni', Leave_Date: '2025-06-30',
+            Google_UID: 'preview-unbound', Google_Email: 'preview-unbound@example.test' });
+    }
     fixtures.duty_assignments = fixtures.duty_records.map(r => ({ _id: r._id,
         assigned_to: r.assigned_to, scheduled_to: r.scheduled_to, assignment_source: r.assignment_source, carried_from: r.carried_from || null }));
 }

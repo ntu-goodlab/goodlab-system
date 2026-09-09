@@ -546,9 +546,11 @@ export const membersModule = {
         try {
             if (payload.Role === 'Admin'
                 && !confirm(`請確認此成員的 Google 綁定帳號確實屬於本人：\n${existingMember?.Google_Email || '尚無信箱紀錄，請先核對 Google UID'}\n\n確定授予／保留管理權限？`)) return;
-            await saveMemberAccess(db, payload.Student_ID, payload, this.currentUser?.uid);
+            const result = await saveMemberAccess(db, payload.Student_ID, payload, this.currentUser?.uid);
             this.closeModal('member-modal');
-            this.showNotification('成員資料與管理權限已一併儲存。');
+            this.showNotification(result?.approved === false
+                ? '成員資料已儲存，帳號仍未開通。請本人登入送出申請，再由管理員核准。'
+                : '成員資料與管理權限已一併儲存。');
         } catch (e) {
             this.showNotification("發生錯誤：" + e.message, 'error');
         } finally {

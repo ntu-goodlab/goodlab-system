@@ -209,6 +209,67 @@ test('升降權 helper 與成員角色原子同步；降權後同一登入狀態
     await assertFails(getDocs(collection(user, 'accounting')));
     await assertSucceeds(getDocs(collection(user, 'logs')));
 });
+
+test('舊綁定已離校者不能直接升權；明確恢復核准後可升降權並保留登入讀取', async () => {
+    const admin = dbFor('admin'), legacy = dbFor('legacy');
+    await seed({ 'members/legacy-student': member('legacy', 'User', { Status: 'Alumni', Leave_Date: '2025-06-30' }) });
+    await assert.rejects(saveApprovedMember(admin, 'legacy-student', { Role: 'Admin', Status: 'Active' }, 'admin'), /尚未核准/);
+    assert.equal((await getDoc(doc(admin, 'members/legacy-student'))).data().Status, 'Alumni');
+    await requestApprovedMembership(legacy, { uid: 'legacy', email: 'legacy@example.test', emailVerified: true, displayName: 'legacy' }, 'legacy-student');
+    const params = { uid: 'legacy', studentId: 'legacy-student', expectedEmail: 'legacy@example.test', actorUid: 'admin' };
+    await assert.rejects(approveMembershipRequest(admin, params), /明確確認/);
+    await assertFails(getDocs(collection(legacy, 'logs')));
+    await assertSucceeds(approveMembershipRequest(admin, { ...params, expectedMemberStatus: 'Alumni', reactivateInactive: true }));
+    const profile = (await getDoc(doc(admin, 'members/legacy-student'))).data();
+    assert.equal(profile.Status, 'Active'); assert.equal(profile.Role, 'User'); assert.equal(profile.Leave_Date, '');
+    assert.deepEqual(profile.Previous_Leave_Dates, ['2025-06-30']);
+    await assertSucceeds(getDocs(collection(legacy, 'logs')));
+    await assertFails(getDocs(collection(legacy, 'accounting')));
+    await assertSucceeds(saveApprovedMember(admin, 'legacy-student', { Role: 'Admin', Status: 'Active', Name_Ch: 'Updated' }, 'admin'));
+    await assertSucceeds(getDocs(collection(legacy, 'accounting')));
+    await assertSucceeds(saveApprovedMember(admin, 'legacy-student', { Role: 'User', Status: 'Active' }, 'admin'));
+    await assertFails(getDocs(collection(legacy, 'accounting')));
+    await assertSucceeds(getDocs(collection(legacy, 'logs')));
+});
+
+test('管理員可修正未核准舊成員狀態；一般儲存不能授權或更换身分', async () => {
+    const admin = dbFor('admin');
+    await seed({ 'members/legacy-student': member('legacy', 'User', { Status: 'Alumni' }) });
+    await assertSucceeds(saveApprovedMember(admin, 'legacy-student', { Role: 'User', Status: 'Active', Phone: 'corrected' }, 'admin'));
+    await assertFails(getDocs(collection(dbFor('legacy'), 'logs')));
+    assert.equal((await getDoc(doc(admin, 'member_access/legacy'))).exists(), false);
+    for (const patch of [{ Role: 'Admin' }, { Google_UID: 'other' }, { Google_Email: 'other@example.test' }]) {
+        await assertFails(updateDoc(doc(admin, 'members/legacy-student'), patch));
+    }
+    await assertFails(updateDoc(doc(dbFor('user'), 'members/legacy-student'), { Status: 'Alumni' }));
+    await assertFails(updateDoc(doc(dbFor('legacy'), 'members/legacy-student'), { Status: 'Alumni' }));
+});
+
+test('舊綁定沒有授權文件時也可解除或刪除，不刪除別人的 UID 授權', async () => {
+    const admin = dbFor('admin');
+    await seed({ 'members/legacy-student': member('legacy'), 'members/legacy2-student': member('legacy2'),
+        'members/conflicting-student': member('user', 'User', { Student_ID: 'conflicting-student' }) });
+    await assertSucceeds(revokeApprovedMembership(admin, 'legacy-student', 'admin'));
+    assert.equal((await getDoc(doc(admin, 'members/legacy-student'))).data().Google_UID, null);
+    await assertSucceeds(revokeApprovedMembership(admin, 'legacy2-student', 'admin', { deleteMember: true }));
+    await assert.rejects(revokeApprovedMembership(admin, 'conflicting-student', 'admin'), /其他成員/);
+    await assertSucceeds(getDocs(collection(dbFor('user'), 'logs')));
+});
+
+test('核准舊綁定時拒絕 UID／信箱衝突及確認後變更的成員狀態', async () => {
+    const admin = dbFor('admin');
+    await seed({ 'members/legacy-student': member('legacy', 'User', { Status: 'Alumni' }) });
+    await requestApprovedMembership(dbFor('legacy'), { uid: 'legacy', email: 'legacy@example.test', emailVerified: true, displayName: 'legacy' }, 'legacy-student');
+    const params = { uid: 'legacy', studentId: 'legacy-student', expectedEmail: 'legacy@example.test', actorUid: 'admin', expectedMemberStatus: 'Alumni', reactivateInactive: true };
+    await seed({ 'members/legacy-student': member('other', 'User', { Student_ID: 'legacy-student', Status: 'Alumni' }) });
+    await assert.rejects(approveMembershipRequest(admin, params), /其他 Google/);
+    await seed({ 'members/legacy-student': member('legacy', 'User', { Status: 'Alumni', Google_Email: 'other@example.test' }) });
+    await assert.rejects(approveMembershipRequest(admin, params), /信箱不一致/);
+    await seed({ 'members/legacy-student': member('legacy') });
+    await assert.rejects(approveMembershipRequest(admin, params), /狀態已變更/);
+    await assertSucceeds(approveMembershipRequest(admin, { ...params, expectedMemberStatus: 'Active', reactivateInactive: false }));
+    await assertSucceeds(getDocs(collection(dbFor('legacy'), 'logs')));
+});
 test('撤銷與刪除 helper 清除 UID 授權，舊登入狀態失效，其他成員不受影響', async () => {
     const admin = dbFor('admin'); const user = dbFor('user');
     await assertSucceeds(revokeApprovedMembership(admin, 'user-student', 'admin'));

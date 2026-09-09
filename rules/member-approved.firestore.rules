@@ -97,6 +97,19 @@ service cloud.firestore {
         && linkedAccessAfter(data, memberId);
     }
 
+    // Administrators can correct an unapproved legacy profile without granting
+    // access. The retained Google identity is immutable and must stay unapproved.
+    function validUnapprovedMemberUpdate(memberId) {
+      let uid = resource.data.get('Google_UID', '');
+      let data = request.resource.data;
+      return validId(uid) && data.Student_ID == memberId
+        && data.Role == 'User' && data.Status in ['Active', 'Alumni']
+        && !data.diff(resource.data).affectedKeys().hasAny([
+          'Student_ID', 'Google_UID', 'Google_Email', 'Google_Display_Name'])
+        && !exists(/databases/$(database)/documents/member_access/$(uid))
+        && !existsAfter(/databases/$(database)/documents/member_access/$(uid));
+    }
+
     function ownAuthorizationUnchanged() {
       return resource.data.get('Google_UID', '') != request.auth.uid
         || !request.resource.data.diff(resource.data).affectedKeys()
@@ -279,7 +292,7 @@ service cloud.firestore {
       allow get: if isAdmin() || ownsMember(memberId);
       allow list: if isAdmin();
       allow create: if isAdmin() && validMemberWrite(memberId);
-      allow update: if (isAdmin() && validMemberWrite(memberId) && ownAuthorizationUnchanged()
+      allow update: if (isAdmin() && (validMemberWrite(memberId) || validUnapprovedMemberUpdate(memberId)) && ownAuthorizationUnchanged()
           && (resource.data.get('Google_UID', '') == request.resource.data.get('Google_UID', '')
             || oldAccessDetached(memberId)))
         || (ownsMember(memberId) && validOwnDisplayName());
