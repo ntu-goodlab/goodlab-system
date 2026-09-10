@@ -25,7 +25,12 @@ export const approvedDutyModule = {
         }
         const weekId = this._getDutyWeekId();
         const result = this._getCurrentDutyPerson();
-        if (result?.member) return dutyModule.renderDuty.call(this);
+        const note = host.querySelector('#duty-note');
+        if (note && note.value !== note.defaultValue && this.currentRole !== 'Admin'
+            && result?.assignedTo !== this.currentMember?.Student_ID) {
+            this._dutyHandoverDraft = { week: weekId, uid: this.currentUser.uid, text: note.value };
+        }
+        if (result?.member) { dutyModule.renderDuty.call(this); this.renderDutyAssistance?.(); return; }
         const assignment = this.data.duty_assignments.find(r => r._id === weekId);
         const canInitialize = assignment && assignment.assigned_to === this.currentMember?.Student_ID;
         const previous = this._getLatestPreviousDutyRecord(weekId);
@@ -50,7 +55,9 @@ export const approvedDutyModule = {
         const button = document.getElementById('btn-align-current-duty'); if (button) button.disabled = true;
         try {
             const week = this._getDutyWeekId();
-            await saveApprovedDutyAssignment(db, week, this._buildDutyRecordPayload(week, id, 'manual'), { replace: true });
+            await saveApprovedDutyAssignment(db, week, this._buildDutyRecordPayload(week, id, 'manual'), {
+                replace: true, reason: document.getElementById('duty-reassign-reason')?.value.trim() || '管理員確認本週排班',
+                fromName: this.getMemberName(this._getCurrentDutyPerson()?.assignedTo), toName: this.getMemberName(id) });
             this.closeModal('current-duty-alignment-modal'); this.showNotification('已核准並建立本週排班。', 'success');
         } catch (error) { this.showNotification(error.message, 'error'); }
         finally { if (button) button.disabled = false; }
@@ -61,7 +68,8 @@ export const approvedDutyModule = {
         if (!this._getDutyRoster().some(m => m.Student_ID === id)) return;
         const button = document.getElementById('btn-save-next-duty'); if (button) button.disabled = true;
         try {
-            await saveApprovedDutyAssignment(db, week, this._buildDutyRecordPayload(week, id, 'manual'), { replace: true });
+            await saveApprovedDutyAssignment(db, week, this._buildDutyRecordPayload(week, id, 'manual'), {
+                replace: true, toName: this.getMemberName(id), reason: '管理員設定下週排班' });
             this.closeModal('next-duty-modal'); this.showNotification('已核准並建立下週排班。', 'success');
         } catch (error) { this.showNotification(error.message, 'error'); }
         finally { if (button) button.disabled = false; }
@@ -69,12 +77,14 @@ export const approvedDutyModule = {
     async approveDutyCarryover() {
         if (this.currentRole !== 'Admin') return;
         const week = this._getDutyWeekId(); const previous = this._getLatestPreviousDutyRecord(week);
-        if (!previous || !confirm(`確認由 ${this.getMemberName(previous.assigned_to)} 承接上週未完成的值日？`)) return;
+        const original = previous?.scheduled_to || previous?.assigned_to;
+        if (!previous || !confirm(`確認由原輪值者 ${this.getMemberName(original)} 承接上週未完成的值日？代做同意不自動延續到新週。`)) return;
         try {
             const payload = this._buildDutyRecordPayload(week, previous.scheduled_to || previous.assigned_to, 'carryover', {
-                assigned_to: previous.assigned_to, carried_from: previous._id,
+                assigned_to: original, carried_from: previous._id,
                 carryover_count: Number(previous.carryover_count || 0) + 1 });
-            await saveApprovedDutyAssignment(db, week, payload, { carryFrom: previous._id });
+            await saveApprovedDutyAssignment(db, week, payload, { carryFrom: previous._id,
+                toName: this.getMemberName(original), reason: '管理員確認原輪值者順延' });
             this.showNotification('已核准順延，原週紀錄已鎖定。', 'success');
         } catch (error) { this.showNotification(error.message, 'error'); }
     }

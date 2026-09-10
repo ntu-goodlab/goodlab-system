@@ -25,6 +25,7 @@ export const approvedAuthModule = {
                     }
                 }
                 this.syncRealtimeListeners(state.role);
+                this.syncDutyAssistance?.(state);
                 if (state.role === 'Guest' || priorRole === 'Admin' && state.role !== 'Admin') {
                     this.renderMembers(); this.renderLogs(); this.renderInstruments(); this.renderInventory();
                     this.renderAccounting(); this.renderEmployment({ preserveDrafts: false });

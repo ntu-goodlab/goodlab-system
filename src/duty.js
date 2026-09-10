@@ -543,12 +543,12 @@ export const dutyModule = {
             </div>
             <label class="duty-note-label" for="duty-note">留言或交接事項（選填）</label>
             <textarea id="duty-note" maxlength="${DUTY_NOTE_MAX_LENGTH}" rows="4"
-                ${submitted ? 'disabled' : ''}
+                ${submitted || !canEdit ? 'disabled' : ''}
                 oninput="app.updateDutyNoteCount(this.value)"
                 onchange="app.saveDutyNote(this.value)"
                 placeholder="例如：機房地板有積水，請下週協助留意。">${escapeDutyHtml(noteValue)}</textarea>
             <div class="duty-note-footer">
-                <span id="duty-note-status" role="status">${submitted ? '已隨本週紀錄封存' : '離開欄位時自動儲存，提交時會再確認一次'}</span>
+                <span id="duty-note-status" role="status">${submitted ? '已隨本週紀錄封存' : !canEdit ? '唯讀：由本週負責人或管理員編輯' : '離開欄位時自動儲存，提交時會再確認一次'}</span>
                 <span id="duty-note-count">${noteValue.length}/${DUTY_NOTE_MAX_LENGTH}</span>
             </div>
         </div>`;
@@ -595,7 +595,7 @@ export const dutyModule = {
                     <div><strong>完成後下一位：</strong>${nextPerson ? `${escapeDutyHtml(nextPerson.Name_Ch)}（${escapeDutyHtml(nextWeekId)} 起）` : '-'}</div>
                     ${nextAssignmentStatusHtml}
                 </div>
-                ${!submitted && !nextWeekRecord?.assignment_source?.includes('admin') ? '<p class="duty-rotation-help">若本週仍未提交，系統會保留原輪值順序，並由本週值日生順延至下一週。</p>' : ''}
+                ${!submitted ? `<p class="duty-rotation-help">${this.approvedAccessEnabled ? '若本週未完成，須由管理員確認原輪值者的下週安排；代做同意只涵蓋本週，不自動順延。' : '若本週仍未提交，系統會保留原輪值順序，並由本週值日生順延至下一週。'}</p>` : ''}
             </div>
 
             <div class="duty-card">
@@ -603,7 +603,7 @@ export const dutyModule = {
                 <ul class="duty-roster-list">${rosterHtml}</ul>
             </div>
 
-            ${canEdit ? `
+            ${canEdit || this.approvedAccessEnabled ? `
             <div class="duty-card">
                 <div class="duty-card-header"><h3><i class="ph ph-broom" aria-hidden="true"></i> 一般清潔</h3></div>
                 <ul class="duty-checklist">${cleaningHtml}</ul>
@@ -738,9 +738,11 @@ export const dutyModule = {
                     <i class="ph ph-caret-down duty-history-caret" aria-hidden="true"></i>
                 </summary>
                 <div class="duty-history-detail">
+                    ${this.renderDutyEventHistory?.(weekId) || ''}
                     <div class="duty-history-submitted">
                         <span>提交時間</span>
                         <strong>${escapeDutyHtml(formatDutyHistorySubmittedAt(record.submitted_at))}</strong>
+                        ${record.submitted_by ? `<span>提交者：${escapeDutyHtml(this.getMemberName(record.submitted_by))}</span>` : ''}
                     </div>
                     <section aria-label="本週叫貨">
                         <h3><i class="ph ph-truck" aria-hidden="true"></i> 本週叫貨</h3>
@@ -931,6 +933,7 @@ export const dutyModule = {
                 status: 'submitted',
                 submitted: true,
                 submitted_at: new Date().toISOString(),
+                ...(this.approvedAccessEnabled ? { submitted_by: this.currentMember.Student_ID } : {}),
                 updated_at: new Date().toISOString()
             });
             this.showNotification('本週值日生工作已提交', 'success');
@@ -974,7 +977,8 @@ export const dutyModule = {
                     <span class="close" onclick="app.closeModal('current-duty-alignment-modal')">&times;</span>
                 </div>
                 <div class="modal-body">
-                    <p class="modal-intro">請選擇本週真正輪到的人。儲存後會將此人設為新的輪值起點，並清除本週尚未提交的清點狀態與留言。完成提交後才會安排下一位；若未完成，則由同一人順延。</p>
+                    <p class="modal-intro">${this.approvedAccessEnabled ? '確認本週原輪值者。儲存會保留已填清單與留言，取消舊邀請的效力，並記錄此次管理員改派。' : '請選擇本週真正輪到的人。儲存後會清除本週尚未提交的清點狀態與留言。'}</p>
+                    ${this.approvedAccessEnabled ? '<label for="duty-reassign-reason">調整原因（選填）</label><input id="duty-reassign-reason" maxlength="200" placeholder="例如：原排班有誤">' : ''}
                     <div class="form-group">
                         <label for="current-duty-assignee">本週實際輪到的人</label>
                         <select id="current-duty-assignee">${options}</select>
