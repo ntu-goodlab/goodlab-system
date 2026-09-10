@@ -128,14 +128,21 @@ service cloud.firestore {
     function validDirectory(memberId) {
       let data = request.resource.data;
       let member = getAfter(/databases/$(database)/documents/members/$(memberId)).data;
-      return data.keys().hasOnly(['Student_ID', 'Name_Ch', 'Name_En', 'Degree', 'Status', 'Role', 'Enrollment_Date'])
+      return data.keys().hasOnly(['Student_ID', 'Name_Ch', 'Name_En', 'Degree', 'Status', 'Role', 'Enrollment_Date', 'duty_access_at'])
         && data.keys().hasAll(['Student_ID', 'Name_Ch', 'Name_En', 'Degree', 'Status', 'Role', 'Enrollment_Date'])
         && data.Student_ID == memberId && member.Student_ID == memberId
         && data.Name_Ch is string && data.Name_Ch == member.get('Name_Ch', '')
         && data.Name_En is string && data.Name_En == member.get('Name_En', '')
         && data.Degree is string && data.Degree == member.get('Degree', '')
         && data.Status == member.Status && data.Role == member.Role
-        && data.Enrollment_Date is string && data.Enrollment_Date == member.get('Enrollment_Date', '');
+        && data.Enrollment_Date is string && data.Enrollment_Date == member.get('Enrollment_Date', '')
+        && (data.get('duty_access_at', null) == null || validDutyDirectoryAccess(memberId, member, data.duty_access_at));
+    }
+
+    function validDutyDirectoryAccess(id, member, stamp) {
+      let a = getAfter(/databases/$(database)/documents/member_access/$(member.Google_UID)).data;
+      return member.Status == 'Active' && a.student_id == id && a.email == member.Google_Email
+        && a.role == member.Role && stamp is timestamp && stamp == a.approved_at;
     }
 
     function validJoinRequest() {
@@ -186,7 +193,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['week_start', 'scheduled_to', 'assigned_to', 'assignment_source',
           'status', 'carried_from', 'carried_over_to', 'carryover_count', 'substitute_pending',
           'substitute_from', 'cleaning', 'supplies', 'note', 'submitted', 'submitted_at',
-          'created_by_uid', 'created_by_student_id', 'updated_at'])
+          'created_by_uid', 'created_by_student_id', 'updated_at', 'assist_request', 'assignment_revision', 'assist_event', 'admin_event', 'submitted_by'])
         && data.keys().hasAll(['week_start', 'scheduled_to', 'assigned_to', 'assignment_source',
           'status', 'cleaning', 'supplies', 'note', 'submitted', 'created_by_uid'])
         && validId(data.assigned_to) && validId(data.scheduled_to)
@@ -252,10 +259,144 @@ service cloud.firestore {
       return access().student_id == resource.data.assigned_to
         && resource.data.status == 'pending' && resource.data.submitted == false
         && (changed.hasOnly(['cleaning', 'supplies', 'note', 'updated_at'])
-          || (changed.hasOnly(['note', 'status', 'submitted', 'submitted_at', 'updated_at'])
-            && data.status == 'submitted' && data.submitted == true)
+          || (changed.hasOnly(['note', 'status', 'submitted', 'submitted_at', 'updated_at', 'submitted_by'])
+            && data.status == 'submitted' && data.submitted == true
+            && data.get('submitted_by', access().student_id) == access().student_id)
           || (changed.hasOnly(['status', 'carried_over_to', 'updated_at'])
             && data.status == 'carried_over' && validCarryover()));
+    }
+
+    // Actual approval is checked independently of the directory projection.
+    function currentApproval(studentId, stamp) {
+      let m = get(/databases/$(database)/documents/members/$(studentId)).data;
+      let a = get(/databases/$(database)/documents/member_access/$(m.Google_UID)).data;
+      return m.Status == 'Active' && m.Student_ID == studentId && a.student_id == studentId
+        && a.email == m.Google_Email && a.role == m.Role && a.approved_at == stamp;
+    }
+    function pad2(n) { return n < 10 ? '0' + string(n) : string(n); }
+    function currentInviteWeek(d) {
+      let local = d.week_start_at + duration.value(8, 'h');
+      return d.week_start_at is timestamp && d.expires_at == d.week_start_at + duration.value(7, 'd')
+        && (local.toMillis() - 345600000) % 604800000 == 0
+        && d.week == string(local.year()) + '-' + pad2(local.month()) + '-' + pad2(local.day())
+        && request.time >= d.week_start_at && request.time < d.expires_at;
+    }
+    function requestParticipant(d) {
+      return (d.from_student == access().student_id && d.from_access_at == access().approved_at)
+        || (d.to_student == access().student_id && d.to_access_at == access().approved_at);
+    }
+    function inviteMatchesRecord(id, d, r) {
+      return r.status == 'pending' && r.submitted == false && r.assist_request == id
+        && r.assigned_to == d.from_student && r.get('assignment_revision', 0) == d.revision;
+    }
+    function canAcceptInvite(id, d) {
+      let r = get(/databases/$(database)/documents/duty_records/$(d.week)).data;
+      return d.status == 'pending' && currentInviteWeek(d) && inviteMatchesRecord(id, d, r)
+        && access().student_id == d.to_student && access().approved_at == d.to_access_at
+        && currentApproval(d.from_student, d.from_access_at);
+    }
+    function acceptedRecord(id, d) {
+      let before = get(/databases/$(database)/documents/duty_records/$(d.week)).data;
+      let after = getAfter(/databases/$(database)/documents/duty_records/$(d.week)).data;
+      return after.diff(before).affectedKeys().hasOnly(['assigned_to', 'assignment_source',
+          'substitute_from', 'assist_request', 'assignment_revision', 'assist_event'])
+        && after.assigned_to == d.to_student && after.assignment_source == 'substitute'
+        && after.substitute_from == d.from_student && after.assist_request == null && after.assist_event == id
+        && after.assignment_revision == before.get('assignment_revision', 0) + 1;
+    }
+    function acceptedAssignment(d) {
+      let r = getAfter(/databases/$(database)/documents/duty_records/$(d.week)).data;
+      let a = getAfter(/databases/$(database)/documents/duty_assignments/$(d.week)).data;
+      return a.keys().hasOnly(['assigned_to', 'scheduled_to', 'assignment_source', 'carried_from'])
+        && a.assigned_to == r.assigned_to && a.scheduled_to == r.scheduled_to
+        && a.assignment_source == 'substitute' && a.get('carried_from', null) == r.get('carried_from', null);
+    }
+    function acceptedEvent(id, d) {
+      let e = getAfter(/databases/$(database)/documents/duty_events/$(id)).data;
+      return !exists(/databases/$(database)/documents/duty_events/$(id))
+        && e.keys().hasOnly(['week', 'kind', 'from_student', 'to_student', 'from_name', 'to_name', 'at'])
+        && e.week == d.week && e.kind == 'accepted' && e.at == request.time
+        && e.from_student == d.from_student && e.to_student == d.to_student
+        && e.from_name == d.from_name && e.to_name == d.to_name;
+    }
+    function acceptance(id) {
+      let before = get(/databases/$(database)/documents/duty_requests/$(id)).data;
+      let after = getAfter(/databases/$(database)/documents/duty_requests/$(id)).data;
+      return canAcceptInvite(id, before)
+        && after.diff(before).affectedKeys().hasOnly(['status', 'responded_at'])
+        && after.status == 'accepted' && after.responded_at == request.time
+        && acceptedRecord(id, before) && acceptedAssignment(before) && acceptedEvent(id, before);
+    }
+    function canReplaceInvite(r) {
+      let oldId = r.get('assist_request', null);
+      return oldId == null || get(/databases/$(database)/documents/duty_requests/$(oldId)).data.status != 'pending'
+        || request.time >= get(/databases/$(database)/documents/duty_requests/$(oldId)).data.expires_at
+        || r.get('assignment_revision', 0) != get(/databases/$(database)/documents/duty_requests/$(oldId)).data.revision
+        || changedInviteIdentity(get(/databases/$(database)/documents/duty_requests/$(oldId)).data);
+    }
+    function changedInviteIdentity(d) {
+      return !exists(/databases/$(database)/documents/member_directory/$(d.from_student))
+        || !exists(/databases/$(database)/documents/member_directory/$(d.to_student))
+        || get(/databases/$(database)/documents/member_directory/$(d.from_student)).data.get('duty_access_at', null) != d.from_access_at
+        || get(/databases/$(database)/documents/member_directory/$(d.to_student)).data.get('duty_access_at', null) != d.to_access_at;
+    }
+    function newInvite(id) {
+      let d = getAfter(/databases/$(database)/documents/duty_requests/$(id)).data;
+      let r = get(/databases/$(database)/documents/duty_records/$(d.week)).data;
+      let next = getAfter(/databases/$(database)/documents/duty_records/$(d.week)).data;
+      return !exists(/databases/$(database)/documents/duty_requests/$(id))
+        && d.keys().hasOnly(['week', 'from_student', 'to_student', 'from_name', 'to_name',
+          'from_access_at', 'to_access_at', 'revision', 'status', 'note', 'created_at', 'week_start_at', 'expires_at'])
+        && d.status == 'pending' && d.created_at == request.time && currentInviteWeek(d)
+        && d.note is string && d.note.size() <= 500
+        && validId(d.to_student) && d.to_student != d.from_student
+        && d.from_student == access().student_id && d.from_access_at == access().approved_at
+        && currentApproval(d.to_student, d.to_access_at)
+        && d.from_name == get(/databases/$(database)/documents/member_directory/$(d.from_student)).data.Name_Ch
+        && d.to_name == get(/databases/$(database)/documents/member_directory/$(d.to_student)).data.Name_Ch
+        && r.status == 'pending' && r.submitted == false && r.assigned_to == d.from_student
+        && d.revision == r.get('assignment_revision', 0) && canReplaceInvite(r)
+        && next.diff(r).affectedKeys().hasOnly(['assist_request']) && next.assist_request == id;
+    }
+    match /duty_requests/{id} {
+      allow read: if isMember() && (access().role == 'Admin' || requestParticipant(resource.data));
+      allow create: if isMember() && newInvite(id);
+      allow update: if isMember() && (request.resource.data.status == 'accepted' ? acceptance(id)
+        : (resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'responded_at'])
+          && request.resource.data.responded_at == request.time
+          && ((request.resource.data.status == 'cancelled' && (access().role == 'Admin'
+            || (access().student_id == resource.data.from_student && access().approved_at == resource.data.from_access_at)))
+            || (request.resource.data.status == 'declined' && access().student_id == resource.data.to_student
+              && access().approved_at == resource.data.to_access_at))));
+      allow delete: if false;
+    }
+    match /duty_events/{id} {
+      allow read: if isMember();
+      allow create: if isMember() && (request.resource.data.kind == 'accepted' ? acceptance(id)
+        : (access().role == 'Admin' && adminDutyEvent(id)));
+      allow update, delete: if false;
+    }
+    function adminDutyEvent(id) {
+      let d = request.resource.data;
+      let r = getAfter(/databases/$(database)/documents/duty_records/$(d.week)).data;
+      return d.keys().hasOnly(['week', 'kind', 'from_student', 'to_student', 'from_name', 'to_name', 'at', 'actor_student', 'reason'])
+        && d.kind == 'admin_assignment' && d.at == request.time && d.actor_student == access().student_id
+        && d.reason is string && d.reason.size() > 0 && d.reason.size() <= 200
+        && d.from_name is string && d.to_name is string
+        && r.admin_event == id && r.assigned_to == d.to_student;
+    }
+    function dutyUpdate(weekId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasAny(['assist_event']) ? acceptanceForWeek(request.resource.data.assist_event, weekId)
+        : changed.hasAny(['assist_request']) ? (changed.hasOnly(['assist_request'])
+          && getAfter(/databases/$(database)/documents/duty_requests/$(request.resource.data.assist_request)).data.week == weekId
+          && newInvite(request.resource.data.assist_request))
+        : ((access().role == 'Admin' && validDutyReferenceUpdate())
+          || (validDutyShape(weekId, request.resource.data) && (access().role == 'Admin' || validAssigneeUpdate())));
+    }
+    function acceptanceForWeek(id, weekId) {
+      return get(/databases/$(database)/documents/duty_requests/$(id)).data.week == weekId && acceptance(id);
     }
 
     // Allow administrators to migrate references in historical records without
@@ -331,10 +472,12 @@ service cloud.firestore {
 
     match /duty_assignments/{weekId} {
       allow read: if isMember();
-      allow create, update: if isAdmin() && validWeek(weekId)
+      allow create, update: if isMember() && (access().role != 'Admin'
+        ? acceptanceForWeek(getAfter(/databases/$(database)/documents/duty_records/$(weekId)).data.assist_event, weekId)
+        : (validWeek(weekId)
         && request.resource.data.keys().hasOnly(['assigned_to', 'scheduled_to', 'assignment_source', 'carried_from'])
         && validId(request.resource.data.assigned_to) && validId(request.resource.data.scheduled_to)
-        && request.resource.data.assignment_source in ['auto', 'carryover', 'manual', 'substitute'];
+        && request.resource.data.assignment_source in ['auto', 'carryover', 'manual', 'substitute']));
       allow delete: if isAdmin();
     }
 
@@ -346,10 +489,7 @@ service cloud.firestore {
         && (access().role == 'Admin' || (access().student_id == request.resource.data.assigned_to
           && request.resource.data.created_by_student_id == access().student_id
           && approvedDutyAssignment(weekId, request.resource.data)));
-      allow update: if isMember()
-        && ((access().role == 'Admin' && validDutyReferenceUpdate())
-          || (validDutyShape(weekId, request.resource.data)
-            && (access().role == 'Admin' || validAssigneeUpdate())));
+      allow update: if isMember() && dutyUpdate(weekId);
       allow delete: if isAdmin();
     }
 

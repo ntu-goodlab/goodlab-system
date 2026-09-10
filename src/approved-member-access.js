@@ -10,12 +10,13 @@ function requireId(value) {
     return value;
 }
 
-export function memberDirectoryEntry(member) {
+export function memberDirectoryEntry(member, approval = null) {
     return {
         Student_ID: member.Student_ID,
         Name_Ch: member.Name_Ch || '', Name_En: member.Name_En || '',
         Degree: member.Degree || '', Status: member.Status, Role: member.Role,
-        Enrollment_Date: member.Enrollment_Date || ''
+        Enrollment_Date: member.Enrollment_Date || '',
+        duty_access_at: member.Status === 'Active' && member.Google_UID ? approval?.approved_at || null : null
     };
 }
 
@@ -33,14 +34,16 @@ export async function syncApprovedMemberTransfer(transaction, db, before, after,
     if (before.Google_UID && before.Google_UID !== after.Google_UID) {
         transaction.delete(doc(db, 'member_access', before.Google_UID));
     }
+    let approval = null;
     if (after.Google_UID) {
-        transaction.set(doc(db, 'member_access', after.Google_UID), {
+        approval = {
             student_id: after.Student_ID, email: after.Google_Email, role: after.Role,
             approved_by: actorUid, approved_at: serverTimestamp()
-        });
+        };
+        transaction.set(doc(db, 'member_access', after.Google_UID), approval);
     }
     transaction.delete(doc(db, 'member_directory', before.Student_ID));
-    transaction.set(doc(db, 'member_directory', after.Student_ID), memberDirectoryEntry(after));
+    transaction.set(doc(db, 'member_directory', after.Student_ID), memberDirectoryEntry(after, approval));
 }
 
 // requestedStudentId is only a claim for an administrator to review.
@@ -95,9 +98,10 @@ export async function approveMembershipRequest(db, { uid, studentId, expectedEma
             after.Leave_Date = '';
         }
         transaction.set(memberRef, after);
-        transaction.set(accessRef, { student_id: studentId, email: claimed.email, role: 'User',
-            approved_by: actorUid, approved_at: serverTimestamp() });
-        transaction.set(doc(db, 'member_directory', studentId), memberDirectoryEntry(after));
+        const approval = { student_id: studentId, email: claimed.email, role: 'User',
+            approved_by: actorUid, approved_at: serverTimestamp() };
+        transaction.set(accessRef, approval);
+        transaction.set(doc(db, 'member_directory', studentId), memberDirectoryEntry(after, approval));
         transaction.delete(requestRef);
     });
 }
@@ -132,13 +136,14 @@ export async function saveApprovedMember(db, studentId, payload, actorUid) {
             throw new Error('請由另一位管理員變更你的權限或停用狀態。');
         }
         if (after.Role === 'Admin' && !before.Google_UID) throw new Error('請先核准一般成員，再授予管理權限。');
+        let approval = entry?.data() || null;
         if (entry && after.Role !== before.Role) {
             if (after.Status !== 'Active') throw new Error('請先解除離校成員的授權。');
-            transaction.set(entry.ref, { ...entry.data(), role: after.Role,
-                approved_by: actorUid, approved_at: serverTimestamp() });
+            approval = { ...entry.data(), role: after.Role, approved_by: actorUid, approved_at: serverTimestamp() };
+            transaction.set(entry.ref, approval);
         }
         transaction.set(ref, after);
-        transaction.set(doc(db, 'member_directory', studentId), memberDirectoryEntry(after));
+        transaction.set(doc(db, 'member_directory', studentId), memberDirectoryEntry(after, approval));
         return { approved: Boolean(entry) };
     });
 }

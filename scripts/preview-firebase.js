@@ -5,7 +5,7 @@ import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS } from '../src/constants.js';
 const isAdmin = new URLSearchParams(location.search).get('role') === 'admin';
 const isUnbound = new URLSearchParams(location.search).get('role') === 'guest';
 const legacyAdmin = new URLSearchParams(location.search).get('legacyAdmin') === '1';
-const uid = isUnbound ? 'preview-unbound' : isAdmin ? 'preview-admin' : 'preview-user';
+const uid = isUnbound ? 'preview-unbound' : isAdmin ? 'preview-admin' : new URLSearchParams(location.search).get('role') === 'helper' ? 'preview-second' : 'preview-user';
 const approvedPreview = import.meta.env.VITE_ACCESS_MODEL === 'approved';
 const user = { uid, displayName: '預覽成員', email: `${uid}@example.test`, emailVerified: true,
     getIdTokenResult: async () => ({ claims: { email: `${uid}@example.test`, email_verified: true }, signInProvider: 'google.com' }) };
@@ -13,7 +13,7 @@ const members = [
     { Student_ID: 'preview-a', Name_Ch: '林同學', Role: 'User', Status: 'Active', Degree: 'Master',
         Enrollment_Date: '2025-09-01', Department: '電機工程學系', Email: 'student@example.test',
         Google_UID: 'preview-user', Google_Email: 'preview-user@example.test', Google_Display_Name: '預覽成員' },
-    { Student_ID: 'preview-b', Name_Ch: '陳同學', Role: 'User', Status: 'Active', Degree: 'Master', Enrollment_Date: '2025-09-01', Google_UID: 'preview-second', Email: 'second@example.test' },
+    { Student_ID: 'preview-b', Name_Ch: '陳同學', Role: 'User', Status: 'Active', Degree: 'Master', Enrollment_Date: '2025-09-01', Google_UID: 'preview-second', Google_Email: 'preview-second@example.test', Email: 'second@example.test' },
     { Student_ID: 'preview-admin-a', Name_Ch: '管理員', Role: 'Admin', Status: 'Active', Degree: 'PhD',
         Google_UID: 'preview-admin', Google_Email: 'preview-admin@example.test', Google_Display_Name: '預覽成員' }
 ];
@@ -65,9 +65,10 @@ if (approvedPreview) {
     members.push({ Student_ID: 'preview-new', Name_Ch: '待開通同學', Name_En: '', Role: 'User',
         Status: 'Active', Degree: 'Master', Enrollment_Date: '2026-09-01', Google_UID: null });
     fixtures.member_access = members.filter(m => m.Google_UID).map(m => ({ _id: m.Google_UID,
-        student_id: m.Student_ID, email: m.Google_Email || `${m.Google_UID}@example.test`, role: m.Role }));
+        student_id: m.Student_ID, email: m.Google_Email || `${m.Google_UID}@example.test`, role: m.Role, approved_at: '2026-01-01T00:00:00.000Z' }));
     fixtures.member_directory = members.map(m => ({ Student_ID: m.Student_ID, Name_Ch: m.Name_Ch,
-        Name_En: m.Name_En || '', Degree: m.Degree, Status: m.Status, Role: m.Role, Enrollment_Date: m.Enrollment_Date || '' }));
+        Name_En: m.Name_En || '', Degree: m.Degree, Status: m.Status, Role: m.Role, Enrollment_Date: m.Enrollment_Date || '',
+        duty_access_at: m.Google_UID ? '2026-01-01T00:00:00.000Z' : null }));
     fixtures.access_requests = [{ _id: 'preview-unbound', student_id: 'preview-new',
         email: 'preview-unbound@example.test', display_name: '預覽成員' }];
     if (new URLSearchParams(location.search).get('recovery') === '1') {
@@ -84,6 +85,14 @@ export const doc = (_db, ...parts) => ({ path: parts.join('/'), isDoc: true });
 export const where = (field, op, value) => ({ field, op, value });
 export const query = (source, ...filters) => ({ ...source, filters });
 const refreshers = new Set();
+// Optional shared fake-data session for two-window UI checks; never Firebase.
+const previewSession = new URLSearchParams(location.search).get('session');
+const shared = approvedPreview && previewSession ? new BroadcastChannel('goodlab-fixtures-' + previewSession) : null;
+shared?.addEventListener('message', event => {
+    if (event.data?.kind === 'request') shared.postMessage({ kind: 'state', fixtures });
+    if (event.data?.kind === 'state') { Object.assign(fixtures, event.data.fixtures); [...refreshers].forEach(refresh => refresh()); }
+});
+shared?.postMessage({ kind: 'request' });
 document.addEventListener('click', event => {
     if (event.target.id === 'preview-inventory-toggle') {
         fixtures.inventory[0].IsOpen = !fixtures.inventory[0].IsOpen;
@@ -102,7 +111,7 @@ export function onSnapshot(source, optionsOrNext, maybeNext) {
         if (source.filters) rows = rows.filter(row => source.filters.every(filter => row[filter.field] === filter.value));
         const snapshots = rows.map(row => ({ id: row._id || row.Student_ID || row.Property_ID || row.Instrument_ID || row.Txn_ID,
             data: () => ({ ...row }), exists: () => true, metadata: { fromCache: false } }));
-        next(source.isDoc ? snapshots.find(item => item.id === id) || { exists: () => false, data: () => undefined, metadata: { fromCache: false } } : { docs: snapshots });
+        next(source.isDoc ? snapshots.find(item => item.id === id) || { exists: () => false, data: () => undefined, metadata: { fromCache: false } } : { docs: snapshots, metadata: { fromCache: false, hasPendingWrites: false } });
     };
     refreshers.add(refresh);
     queueMicrotask(refresh);
@@ -121,7 +130,13 @@ function applyFixtureWrite(kind, ref, payload, options) {
     fixtures[name] ??= [];
     const index = fixtures[name].findIndex(row => fixtureId(row) === id);
     if (kind === 'delete') { if (index >= 0) fixtures[name].splice(index, 1); return; }
-    const result = { ...(kind === 'update' || options?.merge ? fixtures[name][index] || {} : {}), ...payload, _id: id };
+    const result = structuredClone(kind === 'update' || options?.merge ? fixtures[name][index] || {} : {});
+    for (const [key, value] of Object.entries(payload)) {
+        const keys = key.split('.'); let target = result;
+        for (const part of keys.slice(0, -1)) target = target[part] ??= {};
+        target[keys.at(-1)] = value;
+    }
+    result._id = id;
     if (index >= 0) fixtures[name][index] = result; else fixtures[name].push(result);
 }
 // This in-memory preview is for UI checks only; real authorization is tested in the emulator.
@@ -132,6 +147,7 @@ export async function runTransaction(_db, callback) {
         set: (...args) => writes.push(['set', ...args]), update: (...args) => writes.push(['update', ...args]),
         delete: ref => writes.push(['delete', ref]) });
     writes.forEach(args => applyFixtureWrite(...args));
+    shared?.postMessage({ kind: 'state', fixtures });
     queueMicrotask(() => [...refreshers].forEach(refresh => refresh()));
     return result;
 }
@@ -141,6 +157,7 @@ export const updateDoc = (ref, value) => runTransaction(db, async tx => tx.updat
 export const deleteDoc = ref => runTransaction(db, async tx => tx.delete(ref));
 export const signInWithPopup = denyWrite, signOut = denyWrite;
 export const serverTimestamp = () => new Date().toISOString();
+export const Timestamp = { fromMillis: millis => new Date(millis).toISOString() };
 export const writeBatch = () => ({ set() {}, update() {}, delete() {}, commit: denyWrite });
 export const arrayUnion = (...items) => items;
 export const deleteField = () => 'preview-delete-field';

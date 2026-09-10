@@ -8,6 +8,8 @@ import { requestApprovedMembership, approveMembershipRequest, saveApprovedMember
     revokeApprovedMembership, memberDirectoryEntry, syncApprovedMemberTransfer } from '../src/approved-member-access.js';
 import { initializeApprovedDuty, saveApprovedDutyAssignment } from '../src/approved-duty-access.js';
 import { planApprovedMigration } from '../src/approved-migration-plan.js';
+import { inviteDutyAssistance, respondDutyAssistance } from '../src/duty-assistance-access.js';
+import { getDutyWeekId } from '../src/duty-schedule.js';
 
 const projectId = 'demo-goodlab-security';
 if (process.env.GOODLAB_RULES_TEST !== 'local-only'
@@ -32,6 +34,19 @@ const duty = (id = week, assigned = 'user-student', extra = {}) => ({ week_start
 const fullCleaning = Object.fromEntries(['sweep', 'trash', 'supply_check', 'water', 'fingerprint'].map(k => [k, true]));
 const fullSupplies = Object.fromEntries(['acetone', 'methanol', 'detergent', 'n2_tank', 'wiper',
     'glass_slide', 'gloves_s', 'gloves_m', 'gloves_l', 'cotton_swab', 'aluminum_foil', 'pe_gloves'].map(k => [k, 'sufficient']));
+async function assistanceFixture() {
+    const current = getDutyWeekId();
+    await seed({ 'members/helper-student': member('helper'), 'member_access/helper': access('helper'),
+        'member_directory/helper-student': memberDirectoryEntry(member('helper'), access('helper')),
+        [`duty_records/${current}`]: duty(current, 'user-student', { cleaning: { sweep: true }, note: 'preserve progress' }),
+        [`duty_assignments/${current}`]: { assigned_to: 'user-student', scheduled_to: 'user-student', assignment_source: 'auto' } });
+    return current;
+}
+async function inviteFixture(requestId = 'invitation') {
+    const week = await assistanceFixture();
+    await inviteDutyAssistance(dbFor('user'), { requestId, week, fromStudent: 'user-student', toStudent: 'helper-student', note: 'private handover' });
+    return week;
+}
 async function seed(values) {
     await env.withSecurityRulesDisabled(async context => {
         await Promise.all(Object.entries(values).map(([path, data]) => setDoc(doc(context.firestore(), path), data)));
@@ -61,7 +76,7 @@ beforeEach(async () => {
         const profile = member(uid, role);
         fixtures[`members/${uid}-student`] = profile;
         fixtures[`member_access/${uid}`] = access(uid, role);
-        fixtures[`member_directory/${uid}-student`] = memberDirectoryEntry(profile);
+        fixtures[`member_directory/${uid}-student`] = memberDirectoryEntry(profile, access(uid, role));
     }
     await seed(fixtures);
 });
@@ -74,7 +89,7 @@ test('未登入與已驗證但未核准 Guest 都不能讀取任何實驗室集�
         for (const path of labPaths) await assertFails(getDoc(doc(db, path)));
         for (const name of ['members', 'member_directory', 'member_access', 'access_requests', 'admins',
             'logs', 'instruments', 'inventory', 'duty_records', 'duty_assignments', 'bulletins', 'routines',
-            'accounting', 'projects', 'employments']) await assertFails(getDocs(collection(db, name)));
+            'accounting', 'projects', 'employments', 'duty_requests', 'duty_events']) await assertFails(getDocs(collection(db, name)));
     }
 });
 test('未驗證信箱、非 Google 登入及信箱不符，即使 UID 有授權也拒絕', async () => {
@@ -444,4 +459,187 @@ test('歷史值日格式可由 Admin 只移轉學號引用，不能讓一般成�
     await assertSucceeds(updateDoc(doc(dbFor('admin'), path), { assigned_to: 'new-student' }));
     assert.equal((await getDoc(doc(dbFor('admin'), path))).data().legacy_field, 'keep');
     await assertFails(updateDoc(doc(dbFor('admin'), path), { assigned_to: 'user-student', note: 'unrelated edit' }));
+});
+
+
+test('代做由受邀一般成員接受才交接，保留進度與原排定，提交後舊本人不可寫', async () => {
+    const week = await inviteFixture();
+    const user = dbFor('user'), helper = dbFor('helper');
+    await assertFails(updateDoc(doc(helper, 'duty_records', week), { note: 'before acceptance' }));
+    await assertSucceeds(respondDutyAssistance(helper, { requestId: 'invitation', action: 'accepted', studentId: 'helper-student' }));
+    const r = (await getDoc(doc(helper, 'duty_records', week))).data();
+    assert.equal(r.assigned_to, 'helper-student'); assert.equal(r.scheduled_to, 'user-student');
+    assert.deepEqual(r.cleaning, { sweep: true }); assert.equal(r.note, 'preserve progress');
+    assert.equal((await getDoc(doc(helper, 'duty_assignments', week))).data().assigned_to, 'helper-student');
+    assert.equal((await getDoc(doc(helper, 'duty_events/invitation'))).data().from_student, 'user-student');
+    await assertFails(updateDoc(doc(user, 'duty_records', week), { note: 'stale write' }));
+    await assertSucceeds(updateDoc(doc(helper, 'duty_records', week), { cleaning: fullCleaning, supplies: fullSupplies }));
+    await assertSucceeds(updateDoc(doc(helper, 'duty_records', week), { submitted: true, status: 'submitted', submitted_at: new Date().toISOString(), submitted_by: 'helper-student' }));
+    await assertSucceeds(respondDutyAssistance(helper, { requestId: 'invitation', action: 'accepted', studentId: 'helper-student' }));
+    await assertFails(updateDoc(doc(helper, 'duty_events/invitation'), { from_student: 'helper-student' }));
+});
+
+test('取消／婉拒不交接，重新邀請不能接受舊 ID；每週只有一個有效邀請', async () => {
+    const week = await inviteFixture();
+    await assertFails(inviteDutyAssistance(dbFor('user'), { requestId: 'duplicate', week, fromStudent: 'user-student', toStudent: 'helper-student' }));
+    await respondDutyAssistance(dbFor('user'), { requestId: 'invitation', action: 'cancelled', studentId: 'user-student' });
+    await assert.rejects(respondDutyAssistance(dbFor('helper'), { requestId: 'invitation', action: 'accepted', studentId: 'helper-student' }), /已處理/);
+    await inviteDutyAssistance(dbFor('user'), { requestId: 'new-invitation', week, fromStudent: 'user-student', toStudent: 'helper-student' });
+    await respondDutyAssistance(dbFor('helper'), { requestId: 'new-invitation', action: 'declined', studentId: 'helper-student' });
+    assert.equal((await getDoc(doc(dbFor('user'), 'duty_records', week))).data().assigned_to, 'user-student');
+});
+
+test('不接受代做時不能直接改指派、偽造接受歷史，Admin 也不能替受邀者接受', async () => {
+    const week = await inviteFixture();
+    for (const db of [dbFor('user'), dbFor('second'), dbFor('admin')]) {
+        await assertFails(updateDoc(doc(db, 'duty_requests/invitation'), { status: 'accepted', responded_at: serverTimestamp() }));
+    }
+    await assertFails(updateDoc(doc(dbFor('helper'), 'duty_records', week), { assigned_to: 'helper-student' }));
+    await assertFails(setDoc(doc(dbFor('helper'), 'duty_events/fake'), { week, kind: 'accepted' }));
+    await assertFails(getDoc(doc(dbFor('stranger'), 'duty_requests/invitation')));
+    await assertSucceeds(getDoc(doc(dbFor('second'), 'duty_requests/invitation')));
+});
+
+test('私人邀請只能由當事人及管理員讀取，名錄資格不能偽造', async () => {
+    await inviteFixture();
+    await seed({ 'members/observer-student': member('observer'), 'member_access/observer': access('observer') });
+    await assertFails(getDoc(doc(dbFor('observer'), 'duty_requests/invitation')));
+    await assertSucceeds(getDocs(query(collection(dbFor('helper'), 'duty_requests'), where('to_student', '==', 'helper-student'), where('to_access_at', '==', Timestamp.fromMillis(1)))));
+    await assertFails(getDocs(collection(dbFor('helper'), 'duty_requests')));
+    await assertFails(updateDoc(doc(dbFor('admin'), 'member_directory/helper-student'), { duty_access_at: Timestamp.fromMillis(2) }));
+});
+
+test('邀請後撤權、提交或更換排班不能接受；過去週不能邀請', async () => {
+    const week = await inviteFixture();
+    await saveApprovedMember(dbFor('admin'), 'user-student', { Status: 'Alumni' }, 'admin');
+    await assert.rejects(respondDutyAssistance(dbFor('helper'), { requestId: 'invitation', action: 'accepted', studentId: 'helper-student' }), /過期或人員/);
+    await assistanceFixture();
+    await assert.rejects(inviteDutyAssistance(dbFor('user'), { requestId: 'old', week: '2000-01-03', fromStudent: 'user-student', toStudent: 'helper-student' }));
+});
+
+// Use raw batches to test the server independently of client validation.
+async function rawAcceptance(db, requestId = 'invitation') {
+    const d = (await getDoc(doc(db, 'duty_requests', requestId))).data();
+    const r = (await getDoc(doc(db, 'duty_records', d.week))).data();
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'duty_requests', requestId), { status: 'accepted', responded_at: serverTimestamp() });
+    batch.update(doc(db, 'duty_records', d.week), { assigned_to: d.to_student, assignment_source: 'substitute',
+        substitute_from: d.from_student, assist_request: null, assignment_revision: (r.assignment_revision || 0) + 1, assist_event: requestId });
+    batch.set(doc(db, 'duty_assignments', d.week), { assigned_to: d.to_student, scheduled_to: r.scheduled_to,
+        assignment_source: 'substitute', carried_from: r.carried_from || null });
+    batch.set(doc(db, 'duty_events', requestId), { week: d.week, kind: 'accepted', from_student: d.from_student,
+        to_student: d.to_student, from_name: d.from_name, to_name: d.to_name, at: serverTimestamp() });
+    return batch;
+}
+
+test('接受交易不能夾帶修改其他週的指派或紀錄', async () => {
+    await inviteFixture(); const db = dbFor('helper');
+    const other = '2030-01-07';
+    await seed({ [`duty_records/${other}`]: duty(other), [`duty_assignments/${other}`]: { assigned_to: 'user-student', scheduled_to: 'user-student', assignment_source: 'auto' } });
+    const batch = await rawAcceptance(db);
+    batch.update(doc(db, 'duty_records', other), { assist_event: 'invitation', assigned_to: 'helper-student' });
+    await assertFails(batch.commit());
+    const second = await rawAcceptance(db);
+    second.update(doc(db, 'duty_assignments', other), { assigned_to: 'helper-student' });
+    await assertFails(second.commit());
+    assert.equal((await getDoc(doc(db, 'duty_requests/invitation'))).data().status, 'pending');
+});
+
+test('伺服器拒絕過期邀請、過期後改時間與撤權但名錄尚未更新的帳號', async () => {
+    const week = await inviteFixture(); const db = dbFor('helper');
+    const request = (await getDoc(doc(db, 'duty_requests/invitation'))).data();
+    await seed({ 'duty_requests/invitation': { ...request, expires_at: Timestamp.fromMillis(Date.now() - 1) } });
+    await assertFails((await rawAcceptance(db)).commit());
+    const forged = await rawAcceptance(db);
+    forged.update(doc(db, 'duty_requests/invitation'), { expires_at: request.expires_at });
+    await assertFails(forged.commit());
+    await seed({ 'duty_requests/invitation': request, 'members/user-student': member('user', 'User', { Status: 'Alumni' }) });
+    await assertFails((await rawAcceptance(db)).commit());
+    assert.equal((await getDoc(doc(db, 'duty_records', week))).data().assigned_to, 'user-student');
+});
+
+test('管理員改派保留進度並使邀請失效；已提交清單不能再接受', async () => {
+    const week = await inviteFixture(); const helper = dbFor('helper');
+    await saveApprovedDutyAssignment(dbFor('admin'), week, duty(week, 'user-student', { updated_at: new Date().toISOString() }), { replace: true });
+    await assertFails((await rawAcceptance(helper)).commit());
+    const r = (await getDoc(doc(helper, 'duty_records', week))).data();
+    assert.equal(r.note, 'preserve progress'); assert.deepEqual(r.cleaning, { sweep: true });
+    await inviteDutyAssistance(dbFor('user'), { requestId: 'second-invite', week, fromStudent: 'user-student', toStudent: 'helper-student' });
+    await updateDoc(doc(dbFor('user'), 'duty_records', week), { cleaning: fullCleaning, supplies: fullSupplies });
+    await updateDoc(doc(dbFor('user'), 'duty_records', week), { submitted: true, status: 'submitted', submitted_at: new Date().toISOString(), submitted_by: 'user-student' });
+    await assertFails((await rawAcceptance(helper, 'second-invite')).commit());
+});
+
+test('接受與取消同時操作只有一個結果，重複接受不會重複交接', async () => {
+    const week = await inviteFixture();
+    const results = await Promise.allSettled([
+        respondDutyAssistance(dbFor('user'), { requestId: 'invitation', action: 'cancelled', studentId: 'user-student' }),
+        respondDutyAssistance(dbFor('helper'), { requestId: 'invitation', action: 'accepted', studentId: 'helper-student' })
+    ]);
+    assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+    const admin = dbFor('admin'), invite = (await getDoc(doc(admin, 'duty_requests/invitation'))).data();
+    const r = (await getDoc(doc(admin, 'duty_records', week))).data();
+    assert.equal(r.assigned_to, invite.status === 'accepted' ? 'helper-student' : 'user-student');
+    assert.equal((await getDoc(doc(admin, 'duty_events/invitation'))).exists(), invite.status === 'accepted');
+});
+
+test('A→B→Admin 的接受鏈保留原輪值 A，順延仍由 A 承接', async () => {
+    const week = await inviteFixture();
+    await respondDutyAssistance(dbFor('helper'), { requestId: 'invitation', action: 'accepted', studentId: 'helper-student' });
+    await inviteDutyAssistance(dbFor('helper'), { requestId: 'chain', week, fromStudent: 'helper-student', toStudent: 'admin-student' });
+    await respondDutyAssistance(dbFor('admin'), { requestId: 'chain', action: 'accepted', studentId: 'admin-student' });
+    const r = (await getDoc(doc(dbFor('admin'), 'duty_records', week))).data();
+    assert.equal(r.assigned_to, 'admin-student'); assert.equal(r.scheduled_to, 'user-student');
+    assert.equal(r.assignment_revision, 2);
+    const next = getDutyWeekId(Date.parse(`${week}T00:00:00+08:00`) + 7 * 86400000);
+    await saveApprovedDutyAssignment(dbFor('admin'), next, duty(next, 'user-student', { assignment_source: 'carryover', carried_from: week }), { carryFrom: week });
+    assert.equal((await getDoc(doc(dbFor('admin'), 'duty_records', next))).data().assigned_to, 'user-student');
+});
+
+test('刪除受邀成員後能另邀有效成員；不能邀自己或未核准者', async () => {
+    const week = await inviteFixture();
+    await revokeApprovedMembership(dbFor('admin'), 'helper-student', 'admin', { deleteMember: true });
+    await assertSucceeds(inviteDutyAssistance(dbFor('user'), { requestId: 'replacement', week, fromStudent: 'user-student', toStudent: 'admin-student' }));
+    await assert.rejects(inviteDutyAssistance(dbFor('user'), { requestId: 'self', week, fromStudent: 'user-student', toStudent: 'user-student' }), /自己/);
+    await assert.rejects(inviteDutyAssistance(dbFor('user'), { requestId: 'unapproved', week, fromStudent: 'user-student', toStudent: 'unbound' }));
+});
+
+test('邀請不能夾帶另一週的指標，也不能把舊週偽裝成目前週', async () => {
+    const week = await inviteFixture(); const user = dbFor('user');
+    const original = (await getDoc(doc(user, 'duty_requests/invitation'))).data();
+    await respondDutyAssistance(user, { requestId: 'invitation', action: 'cancelled', studentId: 'user-student' });
+    const other = '2000-01-03'; await seed({ [`duty_records/${other}`]: duty(other) });
+    const create = (id, payload) => {
+        const b = writeBatch(user); b.set(doc(user, 'duty_requests', id), { ...payload, created_at: serverTimestamp() });
+        b.update(doc(user, 'duty_records', payload.week), { assist_request: id }); return b;
+    };
+    const batch = create('cross', original);
+    batch.update(doc(user, 'duty_records', other), { assist_request: 'cross' });
+    await assertFails(batch.commit());
+    await assertFails(create('spoof', { ...original, week: other }).commit());
+    const start = Date.parse(`${other}T00:00:00+08:00`);
+    await assertFails(create('expired', { ...original, week: other, week_start_at: Timestamp.fromMillis(start), expires_at: Timestamp.fromMillis(start + 7 * 86400000) }).commit());
+});
+
+test('兩筆同時邀請只能成立一筆；接受與提交不會同時生效', async () => {
+    const week = await assistanceFixture(), user = dbFor('user'), helper = dbFor('helper');
+    const requests = await Promise.allSettled(['first','second'].map(requestId => inviteDutyAssistance(user, { requestId, week, fromStudent:'user-student', toStudent:'helper-student' })));
+    assert.equal(requests.filter(r => r.status === 'fulfilled').length, 1);
+    const requestId = requests.find(r => r.status === 'fulfilled').value;
+    await updateDoc(doc(user, 'duty_records', week), { cleaning:fullCleaning, supplies:fullSupplies });
+    const results = await Promise.allSettled([
+        respondDutyAssistance(helper,{requestId,action:'accepted',studentId:'helper-student'}),
+        updateDoc(doc(user,'duty_records',week),{status:'submitted',submitted:true,submitted_at:new Date().toISOString(),submitted_by:'user-student'})
+    ]);
+    assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+    const record = (await getDoc(doc(helper,'duty_records',week))).data();
+    assert.equal(record.assigned_to, record.submitted ? 'user-student' : 'helper-student');
+});
+
+test('受邀者改為 Admin 後舊核准身分邀請失效，重邀才可接受', async () => {
+    const week = await inviteFixture();
+    await saveApprovedMember(dbFor('admin'),'helper-student',{Role:'Admin'},'admin');
+    await assertFails((await rawAcceptance(dbFor('helper'))).commit());
+    await inviteDutyAssistance(dbFor('user'),{requestId:'new-role',week,fromStudent:'user-student',toStudent:'helper-student'});
+    await assertSucceeds(respondDutyAssistance(dbFor('helper'),{requestId:'new-role',action:'accepted',studentId:'helper-student'}));
 });

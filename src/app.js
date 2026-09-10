@@ -23,6 +23,7 @@ import { accountingModule } from './accounting.js';
 import { inventoryModule } from './inventory.js';
 import { dutyModule } from './duty.js';
 import { approvedDutyModule } from './approved-duty.js';
+import { dutyAssistanceModule } from './duty-assistance.js';
 import { routineModule } from './routine.js';
 import { employmentModule } from './employment.js';
 import { dashboardModule } from './dashboard.js';
@@ -34,7 +35,7 @@ const app = {
         members: [], instruments: [], logs: [], accounting: [], inventory: [],
         duty_records: [], duty_state: null,
         routines: [], bulletins: [],
-        projects: [], employments: [], access_requests: [], duty_assignments: []
+        projects: [], employments: [], access_requests: [], duty_assignments: [], duty_people: [], duty_events: []
     },
     invSortState: { key: 'Property_ID', direction: 'asc' },
     tempLinkedPropId: null,
@@ -120,7 +121,8 @@ const app = {
             <p style="margin-bottom: 10px;">碩班同學每週輪流值日，負責實驗室清潔與耗材清點。</p>
             <ul style="margin-top: 10px; padding-left: 20px; line-height: 1.6;">
                 <li><strong>輪值規則：</strong>在學碩班同學（非 Admin）依成員名單的入學日期自動輪值。</li>
-                <li><strong>未完成順延：</strong>當週未提交時，系統會保留原輪值順序，以新週清單讓同一位值日生繼續；完成後才輪到下一位。</li>
+                <li><strong>未完成順延：</strong>當週未提交時，由管理員核對原輪值者的下週安排。代做只限邀請的該週，不自動延續。</li>
+                <li><strong>請人代做：</strong>本週負責人指定已開通成員，對方親自接受後才交接。保留清單進度與交接紀錄，不交換未來輪值。</li>
                 <li><strong>輪值對齊：</strong>切換自舊系統時，Admin 可將本週對齊到實際輪值者；Admin 手動指定下週則會優先於自動順延。</li>
                 <li><strong>耗材狀態：</strong>每項耗材皆須選擇「足夠、已叫貨或待叫貨」；「待叫貨」只會暫存，完成叫貨並改為「已叫貨」後才能提交。點擊旁邊的 <i class="ph ph-info"></i> 可查看廠商電話。</li>
                 <li><strong>完成交接：</strong>可在提交前填寫留言或交接事項；提交後系統會寄送耗材摘要與下週值日生資訊。</li>
@@ -297,6 +299,8 @@ const app = {
             member_directory: { dataKey: 'members', withId: false, onData: () => { this.membersLoaded = true; this.renderMembers(); this.renderDuty(); this.renderOverview(); } },
             access_requests: { dataKey: 'access_requests', withId: true, onData: () => this.renderAccessRequests?.() },
             duty_assignments: { dataKey: 'duty_assignments', withId: true, onData: () => { this.renderDuty(); this.renderOverview(); } },
+            duty_directory: { collectionName: 'member_directory', dataKey: 'duty_people', withId: false, onData: () => this.renderDutyAssistance?.() },
+            duty_events: { dataKey: 'duty_events', withId: true, onData: () => { this.renderDutyAssistance?.(); this.renderDutyHistory(); } },
             instruments: { dataKey: 'instruments', withId: false, onData: () => { this.renderInstruments(); this.renderOverview(); } },
             logs: { dataKey: 'logs', withId: false, onData: () => { this.renderLogs(); this.renderOverview(); } },
             inventory: { dataKey: 'inventory', withId: false, onData: () => { this.renderInventory(); this.renderOverview(); } },
@@ -329,7 +333,8 @@ const app = {
         if (this.approvedAccessEnabled) {
             allowedByProfile.Guest = [];
             allowedByProfile.User = ['member_directory', 'instruments', 'logs', 'inventory', 'duty_records', 'duty_assignments', 'public_routines', 'public_bulletins'];
-            allowedByProfile.Admin.push('access_requests', 'duty_assignments');
+            allowedByProfile.User.push('duty_events');
+            allowedByProfile.Admin.push('access_requests', 'duty_assignments', 'duty_directory', 'duty_events');
         }
         const allowed = new Set(allowedByProfile[profile] || []);
         const config = this.getRealtimeConfig();
@@ -521,7 +526,7 @@ Object.assign(app, logsModule);
 Object.assign(app, accountingModule);
 Object.assign(app, inventoryModule);
 Object.assign(app, dutyModule);
-if (approvedAccessEnabled) Object.assign(app, approvedDutyModule);
+if (approvedAccessEnabled) Object.assign(app, approvedDutyModule, dutyAssistanceModule);
 Object.assign(app, routineModule);
 Object.assign(app, employmentModule);
 Object.assign(app, dashboardModule);
