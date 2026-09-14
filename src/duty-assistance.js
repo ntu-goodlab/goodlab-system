@@ -81,7 +81,9 @@ export const dutyAssistanceModule = {
         const ready = directoryLoaded && this._assistLoaded?.size === this._assistExpected && !this._assistErrors?.size;
         const pending = rows.find(r => r._id === record.assist_request && stateOf(r) === 'pending');
         const canRequest = record.assigned_to === this.currentMember.Student_ID && record.status === 'pending' && !record.submitted && !pending;
-        const visible = rows.filter(r => r.week === week && r.status === 'pending').sort((a, b) => stampMillis(b.created_at) - stampMillis(a.created_at));
+        const visible = rows.filter(r => r.week === week && (r.status === 'pending'
+            || (r._id === record.assist_request && ['declined', 'cancelled'].includes(r.status))))
+            .sort((a, b) => stampMillis(b.created_at) - stampMillis(a.created_at));
         const audit = this.renderDutyEventHistory(week);
         const hasDraft = this._dutyHandoverDraft?.week === week && this._dutyHandoverDraft.uid === this.currentUser.uid;
         if (!canRequest && !visible.length && !audit && !hasDraft) return;
