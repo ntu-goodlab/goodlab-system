@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // Requires approved UID mappings, a minimal member directory, and administrator-
-// created duty assignments. Deploy together with the approved-mode website.
+// maintained rotation order. Deploy together with the approved-mode website.
 service cloud.firestore {
   match /databases/{database}/documents {
     function verifiedGoogleAccount() {
@@ -257,6 +257,8 @@ service cloud.firestore {
       let data = request.resource.data;
       let changed = data.diff(resource.data).affectedKeys();
       return access().student_id == resource.data.assigned_to
+        && (!exists(/databases/$(database)/documents/duty_rotation/current)
+          || get(/databases/$(database)/documents/duty_rotation/current).data.week == resource.data.week_start)
         && resource.data.status == 'pending' && resource.data.submitted == false
         && (changed.hasOnly(['cleaning', 'supplies', 'note', 'updated_at'])
           || (changed.hasOnly(['note', 'status', 'submitted', 'submitted_at', 'updated_at', 'submitted_by'])
@@ -372,7 +374,7 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /duty_events/{id} {
-      allow read: if isMember();
+      allow read: if isAdmin();
       allow create: if isMember() && (request.resource.data.kind == 'accepted' ? acceptance(id)
         : (access().role == 'Admin' && adminDutyEvent(id)));
       allow update, delete: if false;
@@ -388,7 +390,11 @@ service cloud.firestore {
     }
     function dutyUpdate(weekId) {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return changed.hasAny(['assist_event']) ? acceptanceForWeek(request.resource.data.assist_event, weekId)
+      return changed.hasAny(['status']) && request.resource.data.status == 'carried_over'
+          && exists(/databases/$(database)/documents/duty_rotation/current)
+          && get(/databases/$(database)/documents/duty_rotation/current).data.week == weekId
+          && getAfter(/databases/$(database)/documents/duty_rotation/current).data.week > weekId ? rotationTransition()
+        : changed.hasAny(['assist_event']) ? acceptanceForWeek(request.resource.data.assist_event, weekId)
         : changed.hasAny(['assist_request']) ? (changed.hasOnly(['assist_request'])
           && getAfter(/databases/$(database)/documents/duty_requests/$(request.resource.data.assist_request)).data.week == weekId
           && newInvite(request.resource.data.assist_request))
@@ -470,10 +476,77 @@ service cloud.firestore {
       allow update: if isMember() && (access().role == 'Admin' || validInventoryUpdate(propId));
     }
 
+    function rotationPlan(s, p) {
+      let original = p.get('scheduled_to', p.get('assigned_to', ''));
+      let carry = !p.get('submitted', true) && p.get('status', '') != 'carried_over' && original in s.successors;
+      let chosen = carry ? original : s.successors.get(original, s.first);
+      return { 'assigned_to': chosen, 'scheduled_to': chosen, 'assignment_source': carry ? 'carryover' : 'auto',
+        'carried_from': carry ? s.week : null, 'carryover_count': carry ? p.get('carryover_count', 0) + 1 : 0 };
+    }
+    function rotationRecord(week, s) {
+      let p = s.week == null ? {} : get(/databases/$(database)/documents/duty_records/$(s.week)).data;
+      let manual = exists(/databases/$(database)/documents/duty_assignments/$(week));
+      let a = manual ? get(/databases/$(database)/documents/duty_assignments/$(week)).data : rotationPlan(s, p);
+      let r = getAfter(/databases/$(database)/documents/duty_records/$(week)).data;
+      let assigned = getAfter(/databases/$(database)/documents/duty_assignments/$(week)).data;
+      return r.assigned_to == a.assigned_to && r.scheduled_to == a.scheduled_to
+        && r.assignment_source == a.assignment_source && r.get('carried_from', null) == a.get('carried_from', null)
+        && r.get('carryover_count', 0) == a.get('carryover_count', 0)
+        && assigned.keys().hasOnly(['assigned_to', 'scheduled_to', 'assignment_source', 'carried_from'])
+        && assigned.assigned_to == a.assigned_to && assigned.scheduled_to == a.scheduled_to
+        && assigned.assignment_source == a.assignment_source && assigned.get('carried_from', null) == a.get('carried_from', null)
+        && (manual || (rotationEligible(a.assigned_to)
+          && (a.carried_from == null || rotationCarryLocked(s.week, week))));
+    }
+    function rotationEligible(id) {
+      let m = get(/databases/$(database)/documents/member_directory/$(id)).data;
+      return m.Status == 'Active' && m.Degree == 'Master' && m.Role != 'Admin';
+    }
+    function rotationCarryLocked(from, to) {
+      let before = get(/databases/$(database)/documents/duty_records/$(from)).data;
+      let after = getAfter(/databases/$(database)/documents/duty_records/$(from)).data;
+      return after.diff(before).affectedKeys().hasOnly(['status', 'carried_over_to', 'updated_at'])
+        && after.status == 'carried_over' && after.carried_over_to == to;
+    }
+    function rotationTransition() {
+      let s = get(/databases/$(database)/documents/duty_rotation/current).data;
+      let n = getAfter(/databases/$(database)/documents/duty_rotation/current).data;
+      return n.diff(s).affectedKeys().hasOnly(['week', 'week_start_at'])
+        && (s.week == null || n.week > s.week)
+        && currentInviteWeek({ 'week': n.week, 'week_start_at': n.week_start_at,
+          'expires_at': n.week_start_at + duration.value(7, 'd') })
+        && (exists(/databases/$(database)/documents/duty_records/$(n.week))
+          ? getAfter(/databases/$(database)/documents/duty_records/$(n.week)).data == get(/databases/$(database)/documents/duty_records/$(n.week)).data
+          : rotationRecord(n.week, s));
+    }
+    function rotationForWeek(week) {
+      // The cursor must change in this atomic write. Its update rule validates
+      // the deterministic plan and all linked documents exactly once.
+      return getAfter(/databases/$(database)/documents/duty_rotation/current).data.week == week
+        && get(/databases/$(database)/documents/duty_rotation/current).data.week != week;
+    }
+    // New records are validated by their own create rule. The other atomic
+    // writes validate the linked assignment, without repeating this schema.
+    function blankRotationRecord(r) {
+      return r.cleaning == {} && r.supplies == {} && r.note == ''
+        && r.created_by_student_id == access().student_id
+        && r.get('submitted_at', null) == null && r.get('submitted_by', null) == null
+        && r.get('substitute_pending', null) == null && r.get('substitute_from', null) == null
+        && r.get('carried_over_to', null) == null && r.get('assist_request', null) == null
+        && r.get('assist_event', null) == null && r.get('admin_event', null) == null && r.get('assignment_revision', 0) == 0;
+    }
+    match /duty_rotation/{id} {
+      allow read: if isMember();
+      allow create: if id == 'current' && isAdmin();
+      allow update: if id == 'current' && isMember() && (access().role == 'Admin' || rotationTransition());
+      allow delete: if false;
+    }
     match /duty_assignments/{weekId} {
       allow read: if isMember();
       allow create, update: if isMember() && (access().role != 'Admin'
-        ? acceptanceForWeek(getAfter(/databases/$(database)/documents/duty_records/$(weekId)).data.assist_event, weekId)
+        ? (!exists(/databases/$(database)/documents/duty_records/$(weekId))
+          ? rotationForWeek(weekId)
+          : acceptanceForWeek(getAfter(/databases/$(database)/documents/duty_records/$(weekId)).data.assist_event, weekId))
         : (validWeek(weekId)
         && request.resource.data.keys().hasOnly(['assigned_to', 'scheduled_to', 'assignment_source', 'carried_from'])
         && validId(request.resource.data.assigned_to) && validId(request.resource.data.scheduled_to)
@@ -486,9 +559,12 @@ service cloud.firestore {
       allow create: if isMember() && validDutyShape(weekId, request.resource.data)
         && request.resource.data.created_by_uid == request.auth.uid
         && request.resource.data.status == 'pending' && request.resource.data.submitted == false
-        && (access().role == 'Admin' || (access().student_id == request.resource.data.assigned_to
+        && (access().role == 'Admin' || (existsAfter(/databases/$(database)/documents/duty_rotation/current)
+          && getAfter(/databases/$(database)/documents/duty_rotation/current).data.week == weekId
+          && get(/databases/$(database)/documents/duty_rotation/current).data.week != weekId ? (blankRotationRecord(request.resource.data) && rotationForWeek(weekId))
+          : (access().student_id == request.resource.data.assigned_to
           && request.resource.data.created_by_student_id == access().student_id
-          && approvedDutyAssignment(weekId, request.resource.data)));
+          && approvedDutyAssignment(weekId, request.resource.data))));
       allow update: if isMember() && dutyUpdate(weekId);
       allow delete: if isAdmin();
     }

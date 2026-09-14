@@ -122,12 +122,13 @@ export const dashboardModule = {
         if (result?.roster?.length) {
             const nextRecord = this.data.duty_records.find(item => item._id === nextWeekId);
             const nextId = nextRecord?.assigned_to || nextRecord?.scheduled_to;
-            if (nextId && nextRecord?.assignment_source === 'admin') {
+            if (nextId && ['admin', 'manual'].includes(nextRecord?.assignment_source)) {
                 nextMember = result.roster.find(member => member.Student_ID === nextId) || null;
                 nextLabel = '下週已指定';
             } else if (!record?.submitted) {
                 // 尚未提交時不預告換人，因為實際規則是原值日生順延。
-                nextMember = result.member || result.roster.find(member => member.Student_ID === assignedTo) || null;
+                nextMember = this.approvedAccessEnabled ? result.scheduledMember
+                    : result.member || result.roster.find(member => member.Student_ID === assignedTo) || null;
                 nextLabel = '未完成將順延';
             } else {
                 nextMember = nextId

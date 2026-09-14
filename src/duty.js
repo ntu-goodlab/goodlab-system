@@ -448,7 +448,7 @@ export const dutyModule = {
             ? ['admin', 'manual'].includes(nextWeekRecord.assignment_source)
                 ? '<span class="status-badge status-badge-info">Admin 指定</span>'
                 : '<span class="status-badge">已建立</span>'
-            : `<span class="status-badge">${this.approvedAccessEnabled ? '建議順序，待管理員核准' : '依輪值推算'}</span>`;
+            : '<span class="status-badge">依輪值順序自動接續</span>';
 
         // 輪值順序列表
         const rosterHtml = roster.map(m => {
@@ -595,7 +595,7 @@ export const dutyModule = {
                     <div><strong>完成後下一位：</strong>${nextPerson ? `${escapeDutyHtml(nextPerson.Name_Ch)}（${escapeDutyHtml(nextWeekId)} 起）` : '-'}</div>
                     ${nextAssignmentStatusHtml}
                 </div>
-                ${!submitted ? `<p class="duty-rotation-help">${this.approvedAccessEnabled ? '若本週未完成，須由管理員確認原輪值者的下週安排；代做同意只涵蓋本週，不自動順延。' : '若本週仍未提交，系統會保留原輪值順序，並由本週值日生順延至下一週。'}</p>` : ''}
+                ${!submitted ? `<p class="duty-rotation-help">${this.approvedAccessEnabled ? '未完成將由原輪值者自動順延；完成後輪到下一位。代做只限本週，下週如需協助請重新邀請。' : '若本週仍未提交，系統會保留原輪值順序，並由本週值日生順延至下一週。'}</p>` : ''}
             </div>
 
             <div class="duty-card">
@@ -738,6 +738,7 @@ export const dutyModule = {
                     <i class="ph ph-caret-down duty-history-caret" aria-hidden="true"></i>
                 </summary>
                 <div class="duty-history-detail">
+                    ${record.scheduled_to && record.scheduled_to !== assignedTo ? `<p>原輪值：${escapeDutyHtml(this.getMemberName(record.scheduled_to))}；代做：${escapeDutyHtml(name)}</p>` : ''}
                     ${this.renderDutyEventHistory?.(weekId) || ''}
                     <div class="duty-history-submitted">
                         <span>提交時間</span>
