@@ -2,6 +2,8 @@
 import { getDutyWeekId } from '../src/duty-schedule.js';
 import { shiftDutyDateKey } from '../src/duty-history.js';
 import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS } from '../src/constants.js';
+import { dutyRotationRoster } from '../src/duty-rotation.js';
+import { assistanceWindow } from '../src/duty-assistance-state.js';
 const isAdmin = new URLSearchParams(location.search).get('role') === 'admin';
 const isUnbound = new URLSearchParams(location.search).get('role') === 'guest';
 const legacyAdmin = new URLSearchParams(location.search).get('legacyAdmin') === '1';
@@ -54,11 +56,12 @@ const fixtures = {
         { _id: 'employment-e', student_id: 'preview-a', project_id: 'project-d', declared_start_month: '2026-11', declared_end_month: '2027-01', average_start_month: '2026-11', average_end_month: '2027-01', base_monthly_amount: 7000, month_overrides: {}, schema_version: 2 }
     ]
 };
-if (new URLSearchParams(location.search).get('dutyState') === 'carryover') {
+const dutyState = new URLSearchParams(location.search).get('dutyState');
+if (['carryover', 'completed'].includes(dutyState)) {
     const previousWeek = shiftDutyDateKey(week, -7);
     fixtures.duty_records = [{ _id: previousWeek, week_start: previousWeek,
         assigned_to: 'preview-b', scheduled_to: 'preview-b', assignment_source: 'auto',
-        status: 'pending', submitted: false, cleaning: {}, supplies: {}, note: '示範：等待原值日生建立順延清單' }];
+        status: dutyState === 'completed' ? 'submitted' : 'pending', submitted: dutyState === 'completed', cleaning: {}, supplies: {}, note: '示範：上週輪值紀錄' }];
 }
 if (new URLSearchParams(location.search).get('empty') === '1') { fixtures.projects = []; fixtures.employments = []; }
 if (approvedPreview) {
@@ -78,6 +81,11 @@ if (approvedPreview) {
     }
     fixtures.duty_assignments = fixtures.duty_records.map(r => ({ _id: r._id,
         assigned_to: r.assigned_to, scheduled_to: r.scheduled_to, assignment_source: r.assignment_source, carried_from: r.carried_from || null }));
+    const anchor = fixtures.duty_records[0]._id;
+    fixtures.duty_rotation = [{ _id: 'current', ...dutyRotationRoster(members), week: anchor,
+        week_start_at: new Date(assistanceWindow(anchor).start).toISOString() }];
+    fixtures.duty_events = [{ _id: 'preview-admin-event', week: anchor, kind: 'admin', at: new Date().toISOString(),
+        to_student: 'preview-b', to_name: '陳同學', reason: '示範管理員調整排班' }];
 }
 export const db = {}, auth = {}, provider = {};
 export const collection = (_db, path) => ({ path });
@@ -152,6 +160,7 @@ export async function runTransaction(_db, callback) {
     return result;
 }
 export const getDoc = async ref => approvedPreview ? readFixture(ref) : denyWrite();
+export const getDocFromServer = getDoc;
 export const setDoc = (ref, value, options) => runTransaction(db, async tx => tx.set(ref, value, options));
 export const updateDoc = (ref, value) => runTransaction(db, async tx => tx.update(ref, value));
 export const deleteDoc = ref => runTransaction(db, async tx => tx.delete(ref));

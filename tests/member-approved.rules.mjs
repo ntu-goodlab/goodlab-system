@@ -10,6 +10,8 @@ import { initializeApprovedDuty, saveApprovedDutyAssignment } from '../src/appro
 import { planApprovedMigration } from '../src/approved-migration-plan.js';
 import { inviteDutyAssistance, respondDutyAssistance } from '../src/duty-assistance-access.js';
 import { getDutyWeekId } from '../src/duty-schedule.js';
+import { advanceDutyRotation, syncDutyRotationRoster } from '../src/duty-rotation-access.js';
+import { dutyRotationRoster } from '../src/duty-rotation.js';
 
 const projectId = 'demo-goodlab-security';
 if (process.env.GOODLAB_RULES_TEST !== 'local-only'
@@ -82,14 +84,14 @@ beforeEach(async () => {
 });
 
 const labPaths = ['members/user-student', 'member_directory/user-student', 'logs/test', 'instruments/test',
-    'inventory/test', `duty_records/${week}`, `duty_assignments/${week}`, 'bulletins/public',
+    'inventory/test', `duty_records/${week}`, `duty_assignments/${week}`, 'duty_rotation/current', 'bulletins/public',
     'routines/public', 'accounting/test', 'projects/test', 'employments/test', 'inventory_archive/year/items/test'];
 test('未登入與已驗證但未核准 Guest 都不能讀取任何實驗室集合，含列表查詢', async () => {
     for (const db of [publicDb(), dbFor('guest')]) {
         for (const path of labPaths) await assertFails(getDoc(doc(db, path)));
         for (const name of ['members', 'member_directory', 'member_access', 'access_requests', 'admins',
             'logs', 'instruments', 'inventory', 'duty_records', 'duty_assignments', 'bulletins', 'routines',
-            'accounting', 'projects', 'employments', 'duty_requests', 'duty_events']) await assertFails(getDocs(collection(db, name)));
+            'accounting', 'projects', 'employments', 'duty_requests', 'duty_events', 'duty_rotation']) await assertFails(getDocs(collection(db, name)));
     }
 });
 test('未驗證信箱、非 Google 登入及信箱不符，即使 UID 有授權也拒絕', async () => {
@@ -471,7 +473,8 @@ test('代做由受邀一般成員接受才交接，保留進度與原排定，�
     assert.equal(r.assigned_to, 'helper-student'); assert.equal(r.scheduled_to, 'user-student');
     assert.deepEqual(r.cleaning, { sweep: true }); assert.equal(r.note, 'preserve progress');
     assert.equal((await getDoc(doc(helper, 'duty_assignments', week))).data().assigned_to, 'helper-student');
-    assert.equal((await getDoc(doc(helper, 'duty_events/invitation'))).data().from_student, 'user-student');
+    assert.equal((await getDoc(doc(dbFor('admin'), 'duty_events/invitation'))).data().from_student, 'user-student');
+    await assertFails(getDoc(doc(helper, 'duty_events/invitation')));
     await assertFails(updateDoc(doc(user, 'duty_records', week), { note: 'stale write' }));
     await assertSucceeds(updateDoc(doc(helper, 'duty_records', week), { cleaning: fullCleaning, supplies: fullSupplies }));
     await assertSucceeds(updateDoc(doc(helper, 'duty_records', week), { submitted: true, status: 'submitted', submitted_at: new Date().toISOString(), submitted_by: 'helper-student' }));
@@ -642,4 +645,120 @@ test('受邀者改為 Admin 後舊核准身分邀請失效，重邀才可接受'
     await assertFails((await rawAcceptance(dbFor('helper'))).commit());
     await inviteDutyAssistance(dbFor('user'),{requestId:'new-role',week,fromStudent:'user-student',toStudent:'helper-student'});
     await assertSucceeds(respondDutyAssistance(dbFor('helper'),{requestId:'new-role',action:'accepted',studentId:'helper-student'}));
+});
+
+async function rotationFixture(previousPatch = {}, gap = 7) {
+    const current = getDutyWeekId(), start = Date.parse(`${current}T00:00:00+08:00`);
+    const previous = getDutyWeekId(start - gap * 86400000);
+    await seed({ 'members/helper-student': member('helper'), 'member_access/helper': access('helper'),
+        'member_directory/helper-student': memberDirectoryEntry(member('helper'), access('helper')),
+        [`duty_records/${previous}`]: duty(previous, 'user-student', { submitted: true, status: 'submitted', ...previousPatch }),
+        'duty_rotation/current': { week: previous, week_start_at: Timestamp.fromMillis(Date.parse(`${previous}T00:00:00+08:00`)),
+            first: 'user-student', successors: { 'user-student': 'helper-student', 'helper-student': 'user-student' } } });
+    // The suite's legacy fixture may occupy today's week on a different run date.
+    await env.withSecurityRulesDisabled(async c => {
+        await deleteDoc(doc(c.firestore(),'duty_records',current)); await deleteDoc(doc(c.firestore(),'duty_assignments',current));
+    });
+    return { current, previous };
+}
+const buildRotation = (uid = 'user') => (week, assigned, source, extra) => duty(week, assigned, {
+    created_by_uid: uid, created_by_student_id: `${uid}-student`, assignment_source: source, ...extra });
+
+test('一般成員開啟新週即可自動接續下一位，不需 Admin 核准且不能自行改人', async () => {
+    const { current, previous } = await rotationFixture(); const user = dbFor('user');
+    await assertSucceeds(advanceDutyRotation(user,current,buildRotation()));
+    const r = (await getDoc(doc(user,'duty_records',current))).data();
+    assert.equal(r.assigned_to,'helper-student'); assert.equal(r.assignment_source,'auto');
+    assert.equal((await getDoc(doc(user,'duty_rotation/current'))).data().week,current);
+    await assertFails(updateDoc(doc(user,'duty_records',current),{note:'not my turn'}));
+    await assertSucceeds(updateDoc(doc(dbFor('helper'),'duty_records',current),{note:'my work'}));
+    await assertFails(updateDoc(doc(user,'duty_records',previous),{note:'old week'}));
+    await assertSucceeds(advanceDutyRotation(user,current,()=>{throw Error('must preserve');}));
+});
+
+test('未完成自動由原輪值者順延，代做者不被延續，保留舊進度並鎖定舊週', async () => {
+    const { current, previous } = await rotationFixture({ submitted:false,status:'pending',assigned_to:'helper-student',
+        cleaning:{sweep:true},note:'old progress',assignment_source:'substitute' });
+    await assertSucceeds(advanceDutyRotation(dbFor('helper'),current,buildRotation('helper')));
+    const r = (await getDoc(doc(dbFor('user'),'duty_records',current))).data();
+    assert.equal(r.assigned_to,'user-student'); assert.equal(r.carried_from,previous); assert.equal(r.carryover_count,1);
+    assert.equal(r.note,''); assert.deepEqual(r.cleaning,{});
+    const old = (await getDoc(doc(dbFor('helper'),'duty_records',previous))).data();
+    assert.equal(old.status,'carried_over'); assert.equal(old.note,'old progress'); assert.deepEqual(old.cleaning,{sweep:true});
+    await assertFails(updateDoc(doc(dbFor('helper'),'duty_records',previous),{note:'late write'}));
+});
+
+test('管理員已預排的本週紀錄與進度優先，自動接續只移動週次指標', async () => {
+    const { current } = await rotationFixture({submitted:false,status:'pending'});
+    await seed({ [`duty_records/${current}`]: duty(current,'helper-student',{assignment_source:'manual',note:'keep manual',cleaning:{sweep:true}}) });
+    await assertSucceeds(advanceDutyRotation(dbFor('user'),current,()=>{throw Error('must not rebuild');}));
+    assert.equal((await getDoc(doc(dbFor('user'),'duty_records',current))).data().note,'keep manual');
+});
+
+test('已有 Admin 指派但清單未建立時，一般成員依該指派建立，不能改指定人', async () => {
+    const { current } = await rotationFixture();
+    await seed({ [`duty_assignments/${current}`]:{assigned_to:'user-student',scheduled_to:'user-student',assignment_source:'manual'} });
+    await assertSucceeds(advanceDutyRotation(dbFor('helper'),current,buildRotation('helper')));
+    assert.equal((await getDoc(doc(dbFor('user'),'duty_records',current))).data().assigned_to,'user-student');
+});
+
+test('自動輪值拒絕篡改名單、選錯人、偽造完成、改其他週或單獨跳過指標', async () => {
+    const { current } = await rotationFixture(), user=dbFor('user');
+    await assertFails(updateDoc(doc(user,'duty_rotation/current'),{first:'helper-student'}));
+    await assertFails(updateDoc(doc(user,'duty_rotation/current'),{week:current,week_start_at:Timestamp.fromMillis(Date.parse(`${current}T00:00:00+08:00`))}));
+    for (const patch of [{assigned_to:'user-student'}, {scheduled_to:'user-student'}, {note:'forged progress'}, {cleaning:{sweep:true}}, {admin_event:'fake'}, {assignment_revision:5}]) {
+        await assertFails(advanceDutyRotation(user,current,(...args)=>({...buildRotation()(...args),...patch})));
+    }
+    const future=getDutyWeekId(Date.parse(`${current}T00:00:00+08:00`)+7*86400000);
+    await assertFails(advanceDutyRotation(user,future,buildRotation()));
+    await assertFails(advanceDutyRotation(dbFor('guest'),current,buildRotation('guest')));
+});
+
+test('兩個一般成員同時開啟新週收斂同一份清單；跳過無人開啟的週不消耗輪值', async () => {
+    const { current } = await rotationFixture({},21);
+    const outcomes = await Promise.allSettled([advanceDutyRotation(dbFor('user'),current,buildRotation()),advanceDutyRotation(dbFor('helper'),current,buildRotation('helper'))]);
+    for (const result of outcomes) assert.equal(result.status, 'fulfilled', result.reason?.message);
+    assert.equal((await getDoc(doc(dbFor('user'),'duty_records',current))).data().assigned_to,'helper-student');
+});
+
+test('管理員一次設定循環名單後，第一週可由普通成員建立；名單同步不重設週次', async () => {
+    const { current }=await rotationFixture(); const admin=dbFor('admin');
+    await seed({'duty_rotation/current':{week:null,week_start_at:null,first:'user-student',successors:{'user-student':'helper-student','helper-student':'user-student'}}});
+    await assertSucceeds(advanceDutyRotation(dbFor('helper'),current,buildRotation('helper')));
+    const roster=dutyRotationRoster([member('user'),member('helper'),member('admin','Admin')]);
+    await assertSucceeds(syncDutyRotationRoster(admin,roster,null));
+    assert.equal((await getDoc(doc(admin,'duty_rotation/current'))).data().week,current);
+    await assertFails(syncDutyRotationRoster(dbFor('user'),{first:'other',successors:{other:'other'}},null));
+});
+
+test('自動接續必須完整原子寫入，不能挾帶別週指派或刪改上週工作', async () => {
+    const {current,previous}=await rotationFixture({submitted:false,status:'pending',cleaning:{sweep:true},note:'preserve'});
+    const user=dbFor('user');
+    const start=Timestamp.fromMillis(Date.parse(`${current}T00:00:00+08:00`));
+    const assignment={assigned_to:'user-student',scheduled_to:'user-student',assignment_source:'carryover',carried_from:previous};
+    const record=buildRotation()(current,'user-student','carryover',{...assignment,carryover_count:1});
+    for (const mode of ['no-cursor','no-record','no-assignment','no-lock','edit-old','extra-week']) {
+        const batch=writeBatch(user);
+        if(mode!=='no-cursor') batch.update(doc(user,'duty_rotation/current'),{week:current,week_start_at:start});
+        if(mode!=='no-record') batch.set(doc(user,'duty_records',current),record);
+        if(mode!=='no-assignment') batch.set(doc(user,'duty_assignments',current),assignment);
+        if(mode!=='no-lock') batch.update(doc(user,'duty_records',previous),{status:'carried_over',carried_over_to:current,...(mode==='edit-old'?{note:'forged'}:{})});
+        if(mode==='extra-week') batch.set(doc(user,'duty_assignments/2030-01-07'),assignment);
+        await assertFails(batch.commit());
+    }
+    await assertSucceeds(advanceDutyRotation(user,current,buildRotation()));
+});
+
+test('自動新週仍能完成學生邀請與本人接受，私人管理事件不可被一般成員列出', async () => {
+    const {current}=await rotationFixture();
+    await advanceDutyRotation(dbFor('user'),current,buildRotation());
+    await inviteDutyAssistance(dbFor('helper'),{requestId:'auto-invite',week:current,fromStudent:'helper-student',toStudent:'user-student'});
+    await respondDutyAssistance(dbFor('user'),{requestId:'auto-invite',action:'accepted',studentId:'user-student'});
+    const r=(await getDoc(doc(dbFor('user'),'duty_records',current))).data();
+    assert.equal(r.scheduled_to,'helper-student'); assert.equal(r.assigned_to,'user-student');
+    await assertSucceeds(updateDoc(doc(dbFor('user'),'duty_records',current),{cleaning:fullCleaning,supplies:fullSupplies}));
+    await assertSucceeds(updateDoc(doc(dbFor('user'),'duty_records',current),{status:'submitted',submitted:true,submitted_at:new Date().toISOString(),submitted_by:'user-student'}));
+    await assertFails(updateDoc(doc(dbFor('helper'),'duty_records',current),{note:'former assignee'}));
+    await assertFails(getDocs(collection(dbFor('user'),'duty_events')));
+    assert.equal((await getDocs(collection(dbFor('admin'),'duty_events'))).size,1);
 });

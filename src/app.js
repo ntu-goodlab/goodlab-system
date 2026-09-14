@@ -35,7 +35,7 @@ const app = {
         members: [], instruments: [], logs: [], accounting: [], inventory: [],
         duty_records: [], duty_state: null,
         routines: [], bulletins: [],
-        projects: [], employments: [], access_requests: [], duty_assignments: [], duty_people: [], duty_events: []
+        projects: [], employments: [], access_requests: [], duty_assignments: [], duty_people: [], duty_events: [], duty_rotation: []
     },
     invSortState: { key: 'Property_ID', direction: 'asc' },
     tempLinkedPropId: null,
@@ -121,7 +121,7 @@ const app = {
             <p style="margin-bottom: 10px;">碩班同學每週輪流值日，負責實驗室清潔與耗材清點。</p>
             <ul style="margin-top: 10px; padding-left: 20px; line-height: 1.6;">
                 <li><strong>輪值規則：</strong>在學碩班同學（非 Admin）依成員名單的入學日期自動輪值。</li>
-                <li><strong>未完成順延：</strong>當週未提交時，由管理員核對原輪值者的下週安排。代做只限邀請的該週，不自動延續。</li>
+                <li><strong>自動輪值：</strong>完成後輪到下一位；未完成由原輪值者自動順延，不需要每週核准。代做只限邀請的該週。</li>
                 <li><strong>請人代做：</strong>本週負責人指定已開通成員，對方親自接受後才交接。保留清單進度與交接紀錄，不交換未來輪值。</li>
                 <li><strong>輪值對齊：</strong>切換自舊系統時，Admin 可將本週對齊到實際輪值者；Admin 手動指定下週則會優先於自動順延。</li>
                 <li><strong>耗材狀態：</strong>每項耗材皆須選擇「足夠、已叫貨或待叫貨」；「待叫貨」只會暫存，完成叫貨並改為「已叫貨」後才能提交。點擊旁邊的 <i class="ph ph-info"></i> 可查看廠商電話。</li>
@@ -146,7 +146,7 @@ const app = {
             <ul><li>點選值日區塊可查看本週工作。</li><li>維修與行事摘要會隨資料更新，不必等每週信件。</li><li>公告若附有連結，可直接由公告開啟。</li></ul>`,
         'duty': `
             <p>所有成員都能看到本週輪值與順序；只有當週值日生及 Admin 能修改清單。</p>
-            <ul><li>完成清潔，並確認每項耗材為「足夠」或「已叫貨」後才能提交；「待叫貨」可暫存，但不能提交。</li><li>可由本週負責人請人代做；指定本人接受後才交接，不交換未來輪值。</li><li>若本週未完成，由管理員核對原輪值者的下週安排，代做不自動延續。</li><li>留言可填寫異常或補充內容；邀請的私人交接事項僅双方與管理員可見。</li></ul>`,
+            <ul><li>完成清潔，並確認每項耗材為「足夠」或「已叫貨」後才能提交；「待叫貨」可暫存，但不能提交。</li><li>本週負責人可請人代做；指定本人接受後才交接，不交換未來輪值。</li><li>完成後自動輪下一位；未完成由原輪值者自動順延，不需要每週核准。代做不自動延續。</li><li>留言可填寫異常或補充內容；邀請的私人交接事項僅雙方與管理員可見。</li></ul>`,
         'duty-history': `
             <p>可查看每週值日生、完成狀態、叫貨內容與留言。</p>
             <ul><li>未完成的週次會標示為未完成或已順延。</li><li>點開一筆紀錄即可查看本週叫貨與完整留言。</li></ul>`,
@@ -299,6 +299,7 @@ const app = {
             member_directory: { dataKey: 'members', withId: false, onData: () => { this.membersLoaded = true; this.renderMembers(); this.renderDuty(); this.renderOverview(); } },
             access_requests: { dataKey: 'access_requests', withId: true, onData: () => this.renderAccessRequests?.() },
             duty_assignments: { dataKey: 'duty_assignments', withId: true, onData: () => { this.renderDuty(); this.renderOverview(); } },
+            duty_rotation: { dataKey: 'duty_rotation', withId: true, onData: () => { this.renderDuty(); this.renderOverview(); } },
             duty_directory: { collectionName: 'member_directory', dataKey: 'duty_people', withId: false, onData: () => this.renderDutyAssistance?.() },
             duty_events: { dataKey: 'duty_events', withId: true, onData: () => { this.renderDutyAssistance?.(); this.renderDutyHistory(); } },
             instruments: { dataKey: 'instruments', withId: false, onData: () => { this.renderInstruments(); this.renderOverview(); } },
@@ -333,8 +334,8 @@ const app = {
         if (this.approvedAccessEnabled) {
             allowedByProfile.Guest = [];
             allowedByProfile.User = ['member_directory', 'instruments', 'logs', 'inventory', 'duty_records', 'duty_assignments', 'public_routines', 'public_bulletins'];
-            allowedByProfile.User.push('duty_events');
-            allowedByProfile.Admin.push('access_requests', 'duty_assignments', 'duty_directory', 'duty_events');
+            allowedByProfile.User.push('duty_rotation');
+            allowedByProfile.Admin.push('access_requests', 'duty_assignments', 'duty_directory', 'duty_events', 'duty_rotation');
         }
         const allowed = new Set(allowedByProfile[profile] || []);
         const config = this.getRealtimeConfig();
@@ -362,6 +363,7 @@ const app = {
                 this.realtimeLoadState[name] = 'loaded';
                 this.data[item.dataKey] = snapshot.docs.map(document => item.withId ? ({ _id: document.id, ...document.data() }) : document.data());
                 item.onData();
+                if (['members', 'member_directory'].includes(name)) this.syncAutomaticDuty?.();
                 if (name === 'members' && this.approvedAccessEnabled) this.renderAccessRequests();
                 this.renderDataHealth();
                 const migrationPanel = document.getElementById('member-id-migration');

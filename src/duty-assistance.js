@@ -37,18 +37,20 @@ export const dutyAssistanceModule = {
                 this._assistRows[key] = []; this._assistErrors.add(key); this.renderDutyAssistance();
             }));
         }
-        this._assistTimer = setInterval(() => this.renderDutyAssistance(), 15000);
+        this._assistTimer = setInterval(() => { this.syncAutomaticDuty?.(); this.renderDutyAssistance(); }, 15000);
     },
     assistancePeople() { return this.currentRole === 'Admin' ? this.data.duty_people || [] : this.data.members; },
     assistanceRows() { return [...new Map(Object.values(this._assistRows || {}).flat().map(r => [r._id, r])).values()]; },
     renderDutyEventHistory(week) {
+        if (this.currentRole !== 'Admin') return '';
         const rows = (this.data.duty_events || []).filter(e => e.week === week).sort((a, b) => stampMillis(a.at) - stampMillis(b.at));
         if (!rows.length) return '';
-        return `<section aria-label="值日交接紀錄"><h3>交接紀錄</h3><ul>${rows.map(e => `<li>${escapeHtml(when(e.at))} · ${e.kind === 'accepted'
+        return `<details class="duty-audit"><summary>管理紀錄（${rows.length}）</summary>${rows.map(e => `<p>${escapeHtml(when(e.at))} · ${e.kind === 'accepted'
             ? `${escapeHtml(e.from_name || e.from_student)} 邀請 ${escapeHtml(e.to_name || e.to_student)}，本人已接受代做`
-            : `管理員指定 ${escapeHtml(e.to_name || e.to_student)}${e.from_student ? `（原執行：${escapeHtml(e.from_name || e.from_student)}）` : ''}：${escapeHtml(e.reason || '')}`}</li>`).join('')}</ul></section>`;
+            : `管理員指定 ${escapeHtml(e.to_name || e.to_student)}${e.from_student ? `（原執行：${escapeHtml(e.from_name || e.from_student)}）` : ''}：${escapeHtml(e.reason || '')}`}</p>`).join('')}</details>`;
     },
     renderDutyAssistance() {
+        const auditOpen = document.querySelector('#duty-assistance .duty-audit')?.open;
         document.getElementById('duty-assistance')?.remove();
         document.getElementById('duty-invitation-notice')?.remove();
         document.getElementById('duty-invitation-count')?.remove();
@@ -75,21 +77,27 @@ export const dutyAssistanceModule = {
         }
         const host = document.getElementById('duty-content');
         if (!host || !record) return;
-        const panel = document.createElement('section'); panel.id = 'duty-assistance'; panel.className = 'duty-card';
-        panel.innerHTML = '<h3>本週代做與交接</h3><p>本人接受後才交接，保留清單進度；只影響本週，不交換未來輪值。</p>';
         const directoryLoaded = this.currentRole === 'Admin' ? this.realtimeLoadState.duty_directory === 'loaded' : this.membersLoaded;
         const ready = directoryLoaded && this._assistLoaded?.size === this._assistExpected && !this._assistErrors?.size;
+        const pending = rows.find(r => r._id === record.assist_request && stateOf(r) === 'pending');
+        const canRequest = record.assigned_to === this.currentMember.Student_ID && record.status === 'pending' && !record.submitted && !pending;
+        const visible = rows.filter(r => r.week === week && (r.status === 'pending'
+            || (r._id === record.assist_request && ['declined', 'cancelled'].includes(r.status))))
+            .sort((a, b) => stampMillis(b.created_at) - stampMillis(a.created_at));
+        const audit = this.renderDutyEventHistory(week);
+        const hasDraft = this._dutyHandoverDraft?.week === week && this._dutyHandoverDraft.uid === this.currentUser.uid;
+        if (!canRequest && !visible.length && !audit && !hasDraft) return;
+        const panel = document.createElement('section'); panel.id = 'duty-assistance'; panel.className = 'duty-card';
+        if (canRequest || visible.length) panel.innerHTML = '<h3>本週代做</h3><p>對方接受後才交接；只影響本週，不交換未來輪值。</p>';
         const addButton = (label, handler) => {
             const b = document.createElement('button'); b.className = 'btn btn-secondary btn-sm'; b.type = 'button'; b.textContent = label;
             b.addEventListener('click', handler); panel.append(b); return b;
         };
-        if (!ready) { const p = document.createElement('p'); p.textContent = '正在確認代做邀請與可協助成員…'; panel.append(p); }
+        if (!ready && (canRequest || visible.length)) { const p = document.createElement('p'); p.textContent = '正在確認代做邀請與可協助成員…'; panel.append(p); }
         else {
-            const pending = rows.find(r => r._id === record.assist_request && stateOf(r) === 'pending');
-            if (record.assigned_to === this.currentMember.Student_ID && record.status === 'pending' && !record.submitted && !pending) {
+            if (ready && canRequest) {
                 addButton('請人代做', () => this.openDutyAssistanceInvite());
             }
-            const visible = rows.filter(r => r.week === week).sort((a, b) => stampMillis(b.created_at) - stampMillis(a.created_at));
             for (const r of visible) {
                 const status = stateOf(r), p = document.createElement('p');
                 p.textContent = `${r.from_name} → ${r.to_name} · ${labels[status]}${r.note ? ` · 交接：${r.note}` : ''}`; panel.append(p);
@@ -102,8 +110,9 @@ export const dutyAssistanceModule = {
                 }
             }
         }
-        panel.insertAdjacentHTML('beforeend', this.renderDutyEventHistory(week));
-        if (this._dutyHandoverDraft?.week === week && this._dutyHandoverDraft.uid === this.currentUser.uid) {
+        panel.insertAdjacentHTML('beforeend', audit);
+        if (auditOpen) panel.querySelector('.duty-audit')?.setAttribute('open', '');
+        if (hasDraft) {
             const label = document.createElement('label'); label.textContent = '交接已完成，這是你尚未送出的留言草稿（不會覆蓋對方資料）';
             const draft = document.createElement('textarea'); draft.readOnly = true; draft.value = this._dutyHandoverDraft.text; label.append(draft); panel.append(label);
             addButton('複製草稿', async () => { try { await navigator.clipboard.writeText(draft.value); this.showNotification('草稿已複製。'); } catch { draft.focus(); draft.select(); this.showNotification('請手動複製已選取的草稿。'); } });
