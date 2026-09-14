@@ -952,17 +952,17 @@ export const dutyModule = {
         if (this.currentRole !== 'Admin') return;
         const result = this._getCurrentDutyPerson();
         const roster = this._getDutyRoster();
-        if (!result || !roster.length) {
+        if (!roster.length) {
             this.showNotification('目前沒有可對齊的碩班成員', 'warning');
             return;
         }
-        if (result.record?.submitted) {
+        if (result?.record?.submitted) {
             this.showNotification('本週紀錄已提交，不能再調整輪值', 'warning');
             return;
         }
 
         const options = roster.map(member =>
-            `<option value="${escapeDutyHtml(member.Student_ID)}" ${member.Student_ID === result.scheduledTo ? 'selected' : ''}>${escapeDutyHtml(member.Name_Ch)}</option>`
+            `<option value="${escapeDutyHtml(member.Student_ID)}" ${member.Student_ID === result?.scheduledTo ? 'selected' : ''}>${escapeDutyHtml(member.Name_Ch)}</option>`
         ).join('');
 
         document.getElementById('current-duty-alignment-modal')?.remove();
