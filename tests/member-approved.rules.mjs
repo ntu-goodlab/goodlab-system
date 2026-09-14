@@ -756,6 +756,9 @@ test('自動新週仍能完成學生邀請與本人接受，私人管理事件�
     await respondDutyAssistance(dbFor('user'),{requestId:'auto-invite',action:'accepted',studentId:'user-student'});
     const r=(await getDoc(doc(dbFor('user'),'duty_records',current))).data();
     assert.equal(r.scheduled_to,'helper-student'); assert.equal(r.assigned_to,'user-student');
+    await assertSucceeds(updateDoc(doc(dbFor('user'),'duty_records',current),{cleaning:fullCleaning,supplies:fullSupplies}));
+    await assertSucceeds(updateDoc(doc(dbFor('user'),'duty_records',current),{status:'submitted',submitted:true,submitted_at:new Date().toISOString(),submitted_by:'user-student'}));
+    await assertFails(updateDoc(doc(dbFor('helper'),'duty_records',current),{note:'former assignee'}));
     await assertFails(getDocs(collection(dbFor('user'),'duty_events')));
     assert.equal((await getDocs(collection(dbFor('admin'),'duty_events'))).size,1);
 });
