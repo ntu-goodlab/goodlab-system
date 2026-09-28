@@ -72,6 +72,7 @@ export const approvedAuthModule = {
             : this.currentMember ? `${this.currentMember.Name_Ch} · ${this.currentRole === 'Admin' ? '管理員' : '成員'}`
             : `${this.currentUser.email || 'Google 帳號'} · ${state.status === 'error' ? '無法確認授權' : '尚未開通'}`;
         this.updateSidebarUI();
+        this.renderAccessRequests();
         const modal = document.getElementById('bind-modal');
         modal?.classList.toggle('hidden', !loggedIn || Boolean(this.currentMember) || state.status === 'checking');
         this.renderJoinRequest();
@@ -108,16 +109,50 @@ export const approvedAuthModule = {
         } catch (error) { this.showNotification(error.message, 'error'); }
         finally { if (button) button.disabled = false; }
     },
+    openAccessRequests() {
+        if (this.currentRole !== 'Admin') return;
+        this.switchTab('members');
+        const panel = document.getElementById('access-requests-panel');
+        panel?.focus({ preventScroll: true });
+        panel?.scrollIntoView({ block: 'start' });
+    },
+    renderAccessRequestNotice() {
+        const count = this.currentUser && this.currentRole === 'Admin'
+            && this._approvedState?.status === 'ready' && this.realtimeLoadState.access_requests === 'loaded'
+            ? this.data.access_requests.length : 0;
+        document.querySelectorAll('.access-request-count').forEach(badge => badge.remove());
+        let notice = document.getElementById('access-request-notice');
+        if (!count) { notice?.remove(); return; }
+        for (const entry of document.querySelectorAll('#nav-btn-members, [data-nav-tab="members"], #mobile-more-btn')) {
+            const badge = document.createElement('span'); badge.className = 'access-request-count';
+            badge.textContent = count > 99 ? '99+' : String(count);
+            badge.setAttribute('aria-label', `${count} 筆待核准申請`); entry.append(badge);
+        }
+        if (!notice) {
+            notice = document.createElement('section'); notice.id = 'access-request-notice';
+            notice.className = 'access-request-notice';
+            notice.setAttribute('aria-label', '帳號開通待辦');
+            notice.innerHTML = '<i class="ph ph-user-plus" aria-hidden="true"></i><div><strong role="status"></strong><p>請核對新同學的學號與 Google 帳號，完成開通。</p></div><button type="button" class="btn btn-primary">查看申請</button>';
+            notice.querySelector('button').addEventListener('click', () => this.openAccessRequests());
+            document.querySelector('.page-container')?.prepend(notice);
+        }
+        const title = `${count} 筆帳號開通申請待核准`;
+        if (notice.querySelector('strong').textContent !== title) notice.querySelector('strong').textContent = title;
+    },
     renderAccessRequests() {
+        this.renderAccessRequestNotice();
         let panel = document.getElementById('access-requests-panel');
         if (this.currentRole !== 'Admin') { panel?.remove(); return; }
         if (!panel) {
             panel = document.createElement('section'); panel.id = 'access-requests-panel';
             panel.className = 'duty-card';
+            panel.tabIndex = -1;
             document.getElementById('page-members')?.prepend(panel);
         }
         const requests = this.data.access_requests || [];
+        panel.classList.toggle('access-requests-pending', requests.length > 0);
         panel.innerHTML = '<h3>帳號開通申請</h3><p>先向本人核對學號與 Google 帳號。首次開通為一般成員；管理權限請另行設定。</p>';
+        if (requests.length) panel.querySelector('h3').textContent = `帳號開通申請（${requests.length} 筆待核准）`;
         if (!requests.length) { const p = document.createElement('p'); p.textContent = '目前沒有待核准的申請。'; panel.append(p); }
         for (const request of requests) {
             const member = this.data.members.find(m => m.Student_ID === request.student_id);
