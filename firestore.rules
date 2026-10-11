@@ -199,7 +199,6 @@ service cloud.firestore {
         && cleaning.get('fingerprint', false) == true
         && supplies.get('acetone', null) in ready
         && supplies.get('methanol', null) in ready
-        && supplies.get('detergent', null) in ready
         && supplies.get('n2_tank', null) in ready
         && supplies.get('wiper', null) in ready
         && supplies.get('glass_slide', null) in ready

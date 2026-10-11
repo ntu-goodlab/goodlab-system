@@ -16,7 +16,6 @@ const TEST_RECIPIENT_EMAIL = 'f10943138@ntu.edu.tw';
 const DUTY_SUPPLY_NAMES = {
   acetone: 'Acetone',
   methanol: 'Methanol',
-  detergent: 'Detergent',
   n2_tank: '氮氣鋼瓶',
   wiper: '無塵紙',
   glass_slide: '載玻片',

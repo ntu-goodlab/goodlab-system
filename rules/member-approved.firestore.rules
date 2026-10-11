@@ -236,7 +236,7 @@ service cloud.firestore {
         && c.get('supply_check', false) == true && c.get('water', false) == true
         && c.get('fingerprint', false) == true
         && s.get('acetone', null) in ready && s.get('methanol', null) in ready
-        && s.get('detergent', null) in ready && s.get('n2_tank', null) in ready
+        && s.get('n2_tank', null) in ready
         && s.get('wiper', null) in ready && s.get('glass_slide', null) in ready
         && s.get('gloves_s', null) in ready && s.get('gloves_m', null) in ready
         && s.get('gloves_l', null) in ready && s.get('cotton_swab', null) in ready
