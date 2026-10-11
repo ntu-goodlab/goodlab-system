@@ -10,7 +10,7 @@
  */
 import { db, doc, setDoc, updateDoc, runTransaction } from './firebase.js';
 import { captureFormDrafts, restoreFormDrafts } from './form-draft.js';
-import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
+import { DUTY_CLEANING_TASKS, DUTY_SUPPLY_ITEMS, DUTY_SUPPLY_HISTORY_ITEMS, SUPPLY_VENDORS, DUTY_NOTES } from './constants.js';
 import { canAutoCarryOver, canInitializeDutyWeek, getDutyRoster, getDutyWeekId, hasDutyProgress } from './duty-schedule.js';
 import {
     DUTY_SUPPLY_STATUS_OPTIONS,
@@ -709,8 +709,8 @@ export const dutyModule = {
             const name = this.getMemberName(assignedTo);
             const status = getDutyHistoryStatus(record, currentWeekId);
             const isCompleted = status.key === 'completed';
-            const orderedNames = getOrderedDutySupplyNames(record.supplies || {}, DUTY_SUPPLY_ITEMS);
-            const hasLegacy = hasLegacyDutySupplyData(record.supplies || {}, DUTY_SUPPLY_ITEMS);
+            const orderedNames = getOrderedDutySupplyNames(record.supplies || {}, DUTY_SUPPLY_HISTORY_ITEMS);
+            const hasLegacy = hasLegacyDutySupplyData(record.supplies || {}, DUTY_SUPPLY_HISTORY_ITEMS);
             const note = String(record.note || '').trim();
             let supplyPreview = '未提交，無叫貨完成紀錄';
             let supplyDetail = supplyPreview;

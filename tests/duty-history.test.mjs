@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DUTY_SUPPLY_ITEMS, DUTY_SUPPLY_HISTORY_ITEMS } from '../src/constants.js';
 import {
     formatDutyHistoryRange,
     formatDutyHistorySubmittedAt,
@@ -8,6 +9,11 @@ import {
     getVisibleDutyHistoryRecords,
     hasLegacyDutySupplyData
 } from '../src/duty-history.js';
+
+test('目前不再清點 detergent，但歷史叫貨紀錄仍保留', () => {
+    assert.equal(DUTY_SUPPLY_ITEMS.some(item => item.id === 'detergent'), false);
+    assert.deepEqual(getOrderedDutySupplyNames({ detergent: 'ordered' }, DUTY_SUPPLY_HISTORY_ITEMS), ['Detergent']);
+});
 
 test('值日紀錄只顯示已提交或已過期週次，並由新到舊排列', () => {
     const records = [

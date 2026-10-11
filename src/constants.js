@@ -35,11 +35,10 @@ export const DUTY_CLEANING_TASKS = [
     { id: 'fingerprint', name: '門禁指紋機', detail: '實驗區及辦公區，只能拿清水擦拭' }
 ];
 
-// 耗材清點清單 — 完整 12 項
+// 目前需要清點的耗材
 export const DUTY_SUPPLY_ITEMS = [
     { id: 'acetone',      name: 'Acetone',      threshold: '<4',  unit: '瓶', location: '機房',         vendorGroup: 'youhe' },
     { id: 'methanol',     name: 'Methanol',     threshold: '<4',  unit: '瓶', location: '機房',         vendorGroup: 'youhe' },
-    { id: 'detergent',    name: 'Detergent',    threshold: '<2',  unit: '瓶', location: '機房',         vendorGroup: 'youhe' },
     { id: 'n2_tank',      name: '氮氣鋼瓶',     threshold: '<2',  unit: '瓶 (空瓶不算)', location: '機房', vendorGroup: 'qingfeng' },
     { id: 'wiper',        name: '無塵紙',       threshold: '<10', unit: '盒 (一次叫10盒)', location: '黃光室、多腔體區', vendorGroup: 'xinan' },
     { id: 'glass_slide',  name: '載玻片',       threshold: '<10', unit: '盒 (一次叫10盒)', location: '黃光室', vendorGroup: 'xinan' },
@@ -50,6 +49,9 @@ export const DUTY_SUPPLY_ITEMS = [
     { id: 'aluminum_foil',name: '鋁箔',         threshold: '<20', unit: '條 (一箱20條)', location: '黃光室', vendorGroup: 'xinan' },
     { id: 'pe_gloves',    name: 'PE手套',       threshold: '<20', unit: '盒 (一次叫20盒)', location: '黃光室', vendorGroup: 'xinan' }
 ];
+
+// 已停用的耗材仍保留在歷史叫貨紀錄中。
+export const DUTY_SUPPLY_HISTORY_ITEMS = [...DUTY_SUPPLY_ITEMS, { id: 'detergent', name: 'Detergent' }];
 
 // 耗材廠商聯絡資訊（依 vendorGroup 分組）
 export const SUPPLY_VENDORS = {

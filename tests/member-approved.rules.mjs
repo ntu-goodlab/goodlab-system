@@ -34,7 +34,7 @@ const duty = (id = week, assigned = 'user-student', extra = {}) => ({ week_start
     status: 'pending', submitted: false, cleaning: {}, supplies: {}, note: '',
     created_by_uid: 'admin', created_by_student_id: 'admin-student', ...extra });
 const fullCleaning = Object.fromEntries(['sweep', 'trash', 'supply_check', 'water', 'fingerprint'].map(k => [k, true]));
-const fullSupplies = Object.fromEntries(['acetone', 'methanol', 'detergent', 'n2_tank', 'wiper',
+const fullSupplies = Object.fromEntries(['acetone', 'methanol', 'n2_tank', 'wiper',
     'glass_slide', 'gloves_s', 'gloves_m', 'gloves_l', 'cotton_swab', 'aluminum_foil', 'pe_gloves'].map(k => [k, 'sufficient']));
 async function assistanceFixture() {
     const current = getDutyWeekId();
@@ -371,6 +371,17 @@ test('未完成的值日不能提交；完整提交後不得由成員再次修�
     await assertSucceeds(updateDoc(ref, submit));
     await assertFails(updateDoc(ref, { note: 'after submission' }));
 });
+test('停用 detergent 後，新清單及舊清單未清點或待叫貨的 detergent 都不阻擋提交', async () => {
+    for (const value of [undefined, null, false, 'needs_order']) {
+        const supplies = { ...fullSupplies };
+        if (value !== undefined) supplies.detergent = value;
+        await seed({ [`duty_records/${week}`]: duty(week, 'user-student', { cleaning: fullCleaning, supplies }) });
+        const ref = doc(dbFor('user'), 'duty_records', week);
+        await assertSucceeds(updateDoc(ref, { note: 'can still save progress' }));
+        await assertSucceeds(updateDoc(ref, { status: 'submitted', submitted: true, submitted_at: new Date().toISOString() }));
+    }
+});
+
 test('順延必須有匹配且已排班的新週，原子建立新週與鎖定舊週', async () => {
     const next = '2026-09-14'; const db = dbFor('user');
     const carried = duty(next, 'user-student', { created_by_uid: 'user', created_by_student_id: 'user-student',

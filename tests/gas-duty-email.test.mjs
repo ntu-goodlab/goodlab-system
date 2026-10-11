@@ -93,10 +93,10 @@ test('值日完成信顯示本週與下週區間、叫貨狀況及執行紀錄�
     assert.match(message.htmlBody, /#\/duty-history/);
 });
 
-test('所有耗材足夠時，完成信簡單顯示本週無需叫貨', () => {
+test('不含停用 detergent 的耗材清單足夠時，完成信不會誤報未確認', () => {
     const context = createGasContext();
     const html = vm.runInContext(`buildDutySupplySummaryHtml_({
-      acetone: 'sufficient', methanol: 'sufficient', detergent: 'sufficient',
+      acetone: 'sufficient', methanol: 'sufficient',
       n2_tank: 'sufficient', wiper: 'sufficient', glass_slide: 'sufficient',
       gloves_s: 'sufficient', gloves_m: 'sufficient', gloves_l: 'sufficient',
       cotton_swab: 'sufficient', aluminum_foil: 'sufficient', pe_gloves: 'sufficient'
